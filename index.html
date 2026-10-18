@@ -490,7 +490,7 @@ function listenOwn(id){ if (store.listenDoc) store.listenDoc('progress/' + id); 
 /* ============================== 本機狀態 ============================== */
 const LS = 'yao-proto-v2';
 let S = { key:null, dm:false };
-const QS = new URLSearchParams(location.search), PREVIEW = QS.get('dm') === 'checkmate' && QS.get('preview') ? QS.get('preview') : null;
+const QS = new URLSearchParams(location.search), PREVIEW = (() => { const k = QS.get('preview'); if (!k) return null; try { const v = JSON.parse(localStorage.getItem('yao-proto-v2') || '{}'); return v.dm ? k : null; } catch(e) { return null; } })();
 try { const v = JSON.parse(localStorage.getItem(LS)); if (v) S = Object.assign(S, v); } catch(e) {}
 const save = () => { if (PREVIEW) return; try { localStorage.setItem(LS, JSON.stringify(S)); } catch(e) {} };
 const norm = s => (s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
@@ -542,8 +542,9 @@ async function clearReady(){ const r = {}; ROSTER.forEach(([id]) => { if (roster
 let autoVoteFired = false;
 function checkAutoVote(){ const g = game(); if ((g.phase || 'play') !== 'play' || g.autoVote === false || autoVoteFired) return;
   const [n, t] = readyCount(); if (t >= 2 && n >= Math.ceil(t * VOTE_RATIO)) { autoVoteFired = true;
-    store.merge('game/state', { phase: 'vote', announce: { text: `${n}/${t} 位玩家表示準備好了，投票自動開放。`, ts: Date.now() } }).catch(() => { autoVoteFired = false; });
-    logEvent('系統', `${n}/${t} 位玩家準備好，自動開放投票`, 0); clearReady(); } }
+    store.merge('game/state', { phase: 'vote', announce: { text: '大部分玩家都準備好了，投票自動開放。', ts: 'autovote' } }).catch(() => { autoVoteFired = false; });
+    const me = role(), leader = ROSTER.filter(([id]) => rosterOf(id).ready).map(([id]) => id).sort()[0];
+    if (me && me.id === leader) { logEvent('系統', `${n}/${t} 位玩家準備好，自動開放投票`, 0); clearReady(); } } }
 
 /* 共享狀態變化：更新畫面 */
 let lastAnnounce = null, lastPhase = null, lastProgSig = null;
@@ -555,7 +556,7 @@ function onShared(all){
   const r = role();
   const pp = r ? prog(r.id) : null, sig = r ? (pp === null ? 'null' : JSON.stringify({ f: pp.flags, l: pp.login, rd: pp.ready })) + '|' + g.yaoHolder + '|' + g.phase + '|' + JSON.stringify(player(r.id)) + '|' + ((g.announce && g.announce.text) || '') : g.phase;
   if (S.dm) { if (dmRefresh) dmRefresh(); return; }
-  if (r && prog(r.id) === null && lastProgSig !== null && lastProgSig.startsWith('{')) { S.key = null; save(); toast('DM 已重設你的進度', '請重新輸入身分金鑰登入。'); renderLock(); lastProgSig = null; return; }
+  if (r && prog(r.id) === null && lastProgSig !== null && lastProgSig.startsWith('{')) { delete LOCAL_SEEN[r.id]; localSet('yao-seen', JSON.stringify(LOCAL_SEEN)); try { localStorage.removeItem('yao-onb-' + r.id); } catch(e) {} S.key = null; save(); toast('DM 已重設你的進度', '請重新輸入身分金鑰登入。'); renderLock(); lastProgSig = null; return; }
   if (r && (sig !== lastProgSig || g.phase !== lastPhase)) { lastProgSig = sig; if (!document.querySelector('.win,.calling')) renderHome(); }
   if (g.phase !== lastPhase && lastPhase !== null && r) toast(g.phase === 'vote' ? '投票開始' : g.phase === 'reveal' ? '真相揭曉' : '遊戲進行中', g.phase === 'vote' ? '桌面出現「投票」App，選出你認為的兇手。' : g.phase === 'reveal' ? '打開「投票」App 查看真相。' : '回到遊戲。', 'vote');
   lastPhase = g.phase;
@@ -637,7 +638,7 @@ function onboarding(r){
 let LOCAL_SEEN = (() => { try { return JSON.parse(localStorage.getItem('yao-seen') || '{}'); } catch(e) { return {}; } })(), screenT = 0, screenLast = 0, screenSig = '', seenDirty = false;
 const mon = id => SH['monitor/' + id] || {};
 function track(key){ const r = role(); if (!r || S.dm || PREVIEW) return; const L = LOCAL_SEEN[r.id] = LOCAL_SEEN[r.id] || {}; if (L[key]) return; L[key] = Date.now(); localSet('yao-seen', JSON.stringify(LOCAL_SEEN)); seenDirty = true; snapScreen(); }
-function snapScreen(){ clearTimeout(screenT); const wait = Math.max(1500, 20000 - (Date.now() - screenLast)); screenT = setTimeout(() => { const r = role(); if (!r || S.dm || PREVIEW) return;
+function snapScreen(){ clearTimeout(screenT); const wait = Math.max(1500, 30000 - (Date.now() - screenLast)); screenT = setTimeout(() => { const r = role(); if (!r || S.dm || PREVIEW) return;
   const c = document.querySelector('.calling'), ws = document.querySelectorAll('.win'), w = ws[ws.length - 1];
   const title = c ? '通話中' : w ? w.getAttribute('aria-label') : '桌面';
   const text = c ? c.innerText : w ? w.querySelector('.body').innerText : [...document.querySelectorAll('[data-app]')].map(a => a.innerText.trim()).join('、');
@@ -1728,7 +1729,7 @@ function dmMonitor(b){
   const ago = ts => { const s = Math.max(0, Math.round((Date.now() - ts) / 1000)); return s < 60 ? s + ' 秒前' : Math.round(s / 60) + ' 分鐘前'; };
   const list = ROSTER.filter(([id]) => isActive(id) && prog(id) && prog(id).login).map(([id, t]) => [id, t, (mon(id).screen || {})]).sort((a, c) => (c[2].ts || 0) - (a[2].ts || 0))
     .filter(([id, t]) => !MON_FILTER || (id + t + (player(id).name || '')).includes(MON_FILTER));
-  b.append($(`<div class="mon"><p style="color:var(--mute);margin-top:0">每支手機目前打開的畫面（文字版，玩家每次點擊或換頁就更新）。最近有動作的排在前面。</p>
+  b.append($(`<div class="mon"><p style="color:var(--mute);margin-top:0">每支手機目前打開的畫面（文字版。為了節省 Firebase 用量，每支手機最快 30 秒更新一次，畫面沒變就不更新）。最近有動作的排在前面。</p>
     <input id="mf" placeholder="搜尋角色或玩家姓名" value="${esc(MON_FILTER)}" style="background:#0b1214;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:8px;margin-bottom:10px;width:240px">
     <div class="mongrid">${list.map(([id, t, sc]) => `<div class="moncard"><div class="monhd"><b>${id} ${esc(t)}</b><span>${esc(player(id).name || '')} <a href="${previewURL(id)}" target="_blank" rel="noopener" class="mlink">預覽</a></span></div>
       <div class="monsub"><span class="pill ${sc.ts && Date.now() - sc.ts < 90000 ? 'on' : ''}">${esc(sc.title || '—')}</span><small>${sc.ts ? ago(sc.ts) : '還沒有畫面'}</small></div>
@@ -1801,7 +1802,10 @@ function dmPlayers(b){
     const sv = document.getElementById('saved'); if (sv) sv.textContent = ids.length ? '已儲存' : '沒有變更';
   });
   b.querySelectorAll('[data-reset]').forEach(x => x.addEventListener('click', () => confirmBox(x.closest('td'), `重設 ${x.dataset.reset} 的進度？他的手機會回到鎖定畫面，解開的謎題與發現全部清除。`, async () => {
-    await store.del('progress/' + x.dataset.reset); await store.del('votes/' + x.dataset.reset); await store.del('monitor/' + x.dataset.reset); await rosterSet(x.dataset.reset, { login: 0, ready: false }); logEvent('DM', `重設 ${x.dataset.reset} 的進度`, 0); })));
+    const rid = x.dataset.reset, mine = Object.keys(flags(rid)), others = new Set(); ROSTER.forEach(([id]) => { if (id !== rid) Object.keys(flags(id)).forEach(k => others.add(k)); });
+    const gf = Object.assign({}, game().gflags || {}); mine.forEach(k => { if (!others.has(k)) delete gf[k]; });
+    const ro = Object.assign({}, game().roster || {}); delete ro[rid];
+    await store.del('progress/' + rid); await store.del('votes/' + rid); await store.del('monitor/' + rid); await store.set('game/state', Object.assign({}, game(), { gflags: gf, roster: ro })); logEvent('DM', `重設 ${x.dataset.reset} 的進度`, 0); })));
 }
 function confirmBox(anchor, text, onYes){
   const c = $(`<div class="confirm"><p style="margin:0 0 8px;font-size:13px">${esc(text)}</p><button class="btn danger sm">確定</button> <button class="btn ghost sm">取消</button></div>`);
@@ -1862,12 +1866,12 @@ function dmStatusHTML(){
 /* DM 重要事件提醒 */
 let DM_LAST_EV = Date.now();
 function dmAlerts(){ const ev = events().filter(e => e.ts > DM_LAST_EV && (e.level >= 2 || /手機|投票|NPC/.test(e.text))); if (ev.length) { DM_LAST_EV = Math.max(...ev.map(e => e.ts)); ev.slice(0, 3).reverse().forEach(e => toast((BYID[e.role] ? BYID[e.role].title : e.role), e.text, 'bell')); } }
-function previewURL(id){ return location.pathname + '?dm=checkmate&preview=' + BYID[id].key; }
+function previewURL(id){ return location.pathname + '?preview=' + BYID[id].key; }
 function dmScript(b){
   const step = (n, t, d, read) => `<div class="step"><div class="stepn">${n}</div><div><h4>${t}</h4><p>${d}</p>${read ? `<blockquote>${read}</blockquote>` : ''}</div></div>`;
   b.append($(`<div class="script">
     <p style="color:var(--mute);margin-top:0">建議流程。時間只是參考，劇情推進交給玩家。</p>
-    ${step(1,'開場前（DM 自己）','先到「開場設定」輸入今晚人數並套用，系統會決定要留的角色、列出每位玩家的金鑰。再到「玩家與進度」填好姓名。兇手人選要先私下說明；重口味角色（攝影師、對手網紅、私生飯等）先私下確認玩家願意接。')}
+    ${step(1,'開場前（DM 自己）','正式開場前先到「重設」按一次「全部重設」，清掉測試資料。再到「開場設定」輸入今晚人數並套用，系統會決定要留的角色、列出每位玩家的金鑰。再到「玩家與進度」填好姓名。兇手人選要先私下說明；重口味角色（攝影師、對手網紅、私生飯等）先私下確認玩家願意接。')}
     ${step(2,'發金鑰、登入（約 5 分鐘）','每人一組四位數金鑰，打開網址登入。提醒大家先看「案件簡報」。','')}
     ${step(3,'開場朗讀','用你的聲音把案件經過唸一次，營造氣氛。','「今晚，十週年見面會。大霧、豪雨，下山的路被落石封住。23:15，曜曜被發現倒在二樓休息室，背後插著一把刀。警察天亮才能上山。在那之前——兇手，就在你們之中。」')}
     ${step(4,'閱讀身分文件（10～15 分鐘）','每人讀自己的身分文件、試著解開個人線索。這段時間只回答「看不懂」的問題。')}
@@ -1909,7 +1913,7 @@ function dmReset(b){
       <div id="r3"><button class="btn danger" id="ra">整場重來</button><p style="color:var(--mute);font-size:12.5px;margin:4px 0 0">清除進度、投票、事件紀錄、公告、手機持有者；遊戲階段回到「進行中」。保留玩家姓名與照片。</p></div>
     </div></div>`));
   b.querySelector('#rv').addEventListener('click', () => confirmBox(b.querySelector('#r1'), '確定清空所有投票？', async () => { await store.clearPrefix('votes/'); logEvent('DM', '清空所有投票', 0); }));
-  b.querySelector('#rp').addEventListener('click', () => confirmBox(b.querySelector('#r2'), '確定重設全部玩家進度？', async () => { await store.clearPrefix('progress/'); logEvent('DM', '重設全部玩家進度', 0); }));
+  b.querySelector('#rp').addEventListener('click', () => confirmBox(b.querySelector('#r2'), '確定重設全部玩家進度？', async () => { await store.clearPrefix('progress/'); await store.clearPrefix('monitor/'); await store.clearPrefix('votes/'); await store.set('game/state', Object.assign({}, game(), { roster: {}, gflags: {}, yaoHolder: null, phase: 'play' })); logEvent('DM', '重設全部玩家進度', 0); }));
   b.querySelector('#ra').addEventListener('click', () => confirmBox(b.querySelector('#r3'), '確定整場重來？這個動作無法復原。', async () => {
     await store.clearPrefix('progress/'); await store.clearPrefix('votes/'); await store.clearPrefix('events/'); await store.clearPrefix('monitor/'); await store.set('game/state', { phase:'play', yaoHolder:null, announce:{ text:'', ts: Date.now() }, setup: game().setup || null, autoVote: game().autoVote !== false }); }));
 }
@@ -1923,7 +1927,7 @@ async function FirebaseStore(cfg){
   return Cloud({
     mergeSet: (p, d) => fs.doc(p).set(d, { merge: true }),
     docSnap: (p, n) => fs.doc(p).onSnapshot(d => n({ exists: d.exists, data: () => d.data() }), () => {}),
-    collection: c => ({ onSnapshot: (n, e) => fs.collection(c).onSnapshot(snap => n({ docs: snap.docs.map(d => ({ id: d.id, exists: true, data: () => d.data() })) }), e),
+    collection: c => ({ onSnapshot: (n, e) => (c === 'events' ? fs.collection(c).orderBy('ts', 'desc').limit(300) : fs.collection(c)).onSnapshot(snap => n({ docs: snap.docs.map(d => ({ id: d.id, exists: true, data: () => d.data() })) }), e),
       get: async () => { const snap = await fs.collection(c).get(); return { docs: snap.docs.map(d => ({ id: d.id })) }; },
       add: d => fs.collection(c).add(d) }),
     doc: p => ({ get: async () => { const x = await fs.doc(p).get(); return { exists: x.exists }; }, set: d => fs.doc(p).set(d), update: d => fs.doc(p).set(d, { merge: true }), delete: () => fs.doc(p).delete() }),
