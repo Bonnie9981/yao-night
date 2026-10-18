@@ -397,7 +397,14 @@ const ROSTER = DATA.roles.map(r => [r.id, r.title]).sort((a,b) => a[0].localeCom
 const KILLER = 'E1';
 const PARKING_DB = SH_.parking;
 /* 正式場：填入 Firebase 設定即可改用 Firebase 同步（放在 GitHub Pages 時使用） */
-const FIREBASE_CONFIG = null;
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyAzKZM3LYkcz4KPGkdClSeGSLK2jWXc8oU",
+  authDomain: "yao-night.firebaseapp.com",
+  projectId: "yao-night",
+  storageBucket: "yao-night.firebasestorage.app",
+  messagingSenderId: "719339241185",
+  appId: "1:719339241185:web:bce43a8de26f4cc76f41a0"
+};
 
 /* ============================== 資料層：claude db，沒有就用本機 ============================== */
 const LOCAL_KEY = 'yao-shared-v2';
@@ -419,20 +426,21 @@ const Local = (() => {
     async clearPrefix(prefix){ const o = read(); Object.keys(o).forEach(k => k.startsWith(prefix) && delete o[k]); write(o); },
   };
 })();
-function Cloud(db){
-  const COLS = ['game','progress','players','events','votes'];
-  const cache = {}; const subs = new Set();
+function Cloud(db, opt){
+  opt = opt || {};
+  const cache = {}; const subs = new Set(), listening = new Set();
   const fire = () => subs.forEach(f => f({...cache}));
-  COLS.forEach(c => db.collection(c).onSnapshot(snap => {
+  const listen = c => { if (listening.has(c)) return; listening.add(c); db.collection(c).onSnapshot(snap => {
     Object.keys(cache).forEach(k => k.startsWith(c + '/') && delete cache[k]);
     snap.docs.forEach(d => { if (d.exists) cache[c + '/' + d.id] = d.data(); });
     fire();
-  }, () => {}));
+  }, () => {}); };
+  (opt.cols || ['game','progress','players','events','votes','monitor']).forEach(listen);
   return {
-    kind:'cloud',
+    kind: opt.kind || 'cloud', listen,
     watch(fn){ subs.add(fn); fn({...cache}); return () => subs.delete(fn); },
     set(path, data){ return db.doc(path).set(data); },
-    async merge(path, data){ const s = await db.doc(path).get(); return s.exists ? db.doc(path).update(data) : db.doc(path).set(data); },
+    async merge(path, data){ if (db.mergeSet) return db.mergeSet(path, data); const s = await db.doc(path).get(); return s.exists ? db.doc(path).update(data) : db.doc(path).set(data); },
     del(path){ return db.doc(path).delete(); },
     add(col, data){ return db.collection(col).add(data); },
     async clearPrefix(prefix){ const col = prefix.replace(/\/$/, ''); const s = await db.collection(col).get(); for (const d of s.docs) await db.doc(col + '/' + d.id).delete(); },
@@ -572,14 +580,15 @@ function renderHome(){
   el.querySelector('#logout').addEventListener('click', () => { S.key = null; save(); renderLock(); });
 }
 /* 追蹤玩家看過的東西與目前畫面（給 DM 監看） */
-let LOCAL_SEEN = {}, screenT = 0;
-function track(key){ const r = role(); if (!r || S.dm) return; const base = (prog(r.id) && prog(r.id).seen) || {}; if (base[key] || LOCAL_SEEN[key]) return; LOCAL_SEEN[key] = Date.now();
-  store.merge('progress/' + r.id, { seen: Object.assign({}, base, LOCAL_SEEN) }).catch(() => {}); }
-function snapScreen(){ clearTimeout(screenT); screenT = setTimeout(() => { const r = role(); if (!r || S.dm) return;
+let LOCAL_SEEN = {}, screenT = 0, screenLast = 0;
+const mon = id => SH['monitor/' + id] || {};
+function track(key){ const r = role(); if (!r || S.dm) return; const L = LOCAL_SEEN[r.id] = LOCAL_SEEN[r.id] || {}; if (L[key]) return; L[key] = Date.now();
+  store.merge('monitor/' + r.id, { seen: Object.assign({}, mon(r.id).seen || {}, L) }).catch(() => {}); }
+function snapScreen(){ clearTimeout(screenT); const wait = Math.max(800, 3000 - (Date.now() - screenLast)); screenT = setTimeout(() => { const r = role(); if (!r || S.dm) return; screenLast = Date.now();
   const c = document.querySelector('.calling'), ws = document.querySelectorAll('.win'), w = ws[ws.length - 1];
   const title = c ? '通話中' : w ? w.getAttribute('aria-label') : '桌面';
   const text = c ? c.innerText : w ? w.querySelector('.body').innerText : [...document.querySelectorAll('[data-app]')].map(a => a.innerText.trim()).join('、');
-  store.merge('progress/' + r.id, { screen: { title, text: (text || '').replace(/\n{2,}/g, '\n').slice(0, 900), ts: Date.now() } }).catch(() => {}); }, 600); }
+  store.merge('monitor/' + r.id, { screen: { title, text: (text || '').replace(/\n{2,}/g, '\n').slice(0, 900), ts: Date.now() } }).catch(() => {}); }, wait); }
 function win(title, inner, onBack){
   const w = $(`<section class="win" aria-label="${esc(title)}"><div class="bar"><button aria-label="返回">‹ 返回</button><h2>${esc(title)}</h2></div><div class="body"></div></section>`);
   w.querySelector('.body').append(...(Array.isArray(inner) ? inner : [inner]));
@@ -1596,6 +1605,7 @@ const DRAFT = {}; let ANN_DRAFT = null;
 const FLAG_LABEL = { solved:['個人謎題',1], cctv:['調閱監視器',1], plateAgent:['查經紀人車',1], schedule:['看流程表',3], backup:['找到備用影片',2], backupRule:['找到備案說明',2], recWeather:['直播開場錄音',2], vidWrist:['手腕沒手環',2], fire119:['119 判斷',2], yaoCharged:['手機充電',2], yaoUnlocked:['手機解鎖',2], yaoData:['看手機內容',2], rec027:['027 錄音',3], lottery027:['查 027 號',3], vidFront:['第一排錄影',3], plateCop:['查 6 號車',3] };
 function renderDM(){
   phone.classList.add('wide'); screen.innerHTML = '';
+  if (store.listen) { store.listen('events'); store.listen('monitor'); }
   const el = $(`<div class="dm">
     <div class="bar"><button id="dmout">‹ 登出</button><h2>DM 後台</h2></div>
     <div class="dmtabs" role="tablist">
@@ -1625,7 +1635,7 @@ function roleItems(id){ const r = BYID[id], it = [];
   (r.messages || []).forEach(m => it.push(['v:' + m.with, 'LINE：' + m.with, 'seen']));
   [...(r.photos || []), ...(r.cameraFiles || [])].forEach(p => { it.push(['v:' + p.title, '照片：' + p.title, 'seen']); if (p.zoom) it.push(['z:' + p.title, '放大：' + p.title, 'seen']); });
   return it; }
-function roleProgress(id){ const p = prog(id) || {}, seen = p.seen || {}, f = flags(id), it = roleItems(id);
+function roleProgress(id){ const seen = mon(id).seen || {}, f = flags(id), it = roleItems(id);
   const done = it.map(([k, , t]) => t === 'flag' ? !!f[k] : !!seen[k]); return { it, done, n: done.filter(Boolean).length, total: it.length }; }
 const bar = (n, t, cls) => `<div class="pbar ${cls || ''}"><span style="width:${t ? Math.round(n / t * 100) : 0}%"></span></div><small>${n} / ${t}</small>`;
 let DM_OPEN = {};
@@ -1654,7 +1664,7 @@ function dmProgress(b){
 let MON_FILTER = '';
 function dmMonitor(b){
   const ago = ts => { const s = Math.max(0, Math.round((Date.now() - ts) / 1000)); return s < 60 ? s + ' 秒前' : Math.round(s / 60) + ' 分鐘前'; };
-  const list = ROSTER.filter(([id]) => isActive(id) && prog(id) && prog(id).login).map(([id, t]) => [id, t, (prog(id).screen || {})]).sort((a, c) => (c[2].ts || 0) - (a[2].ts || 0))
+  const list = ROSTER.filter(([id]) => isActive(id) && prog(id) && prog(id).login).map(([id, t]) => [id, t, (mon(id).screen || {})]).sort((a, c) => (c[2].ts || 0) - (a[2].ts || 0))
     .filter(([id, t]) => !MON_FILTER || (id + t + (player(id).name || '')).includes(MON_FILTER));
   b.append($(`<div class="mon"><p style="color:var(--mute);margin-top:0">每支手機目前打開的畫面（文字版，玩家每次點擊或換頁就更新）。最近有動作的排在前面。</p>
     <input id="mf" placeholder="搜尋角色或玩家姓名" value="${esc(MON_FILTER)}" style="background:#0b1214;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:8px;margin-bottom:10px;width:240px">
@@ -1677,7 +1687,7 @@ function dmOverview(b){
       <div class="stat"><small>③真實時間 發現</small><b>${lv(3)}</b></div>
       <div class="stat"><small>已投票</small><b>${votes}</b></div>
       <div class="stat"><small>準備投票</small><b>${readyCount()[0]}</b> / ${readyCount()[1]}</div>
-      <div class="stat"><small>同步模式</small><b style="font-size:15px">${store.kind === 'cloud' ? '全場同步' : '本機（測試）'}</b></div>
+      <div class="stat"><small>同步模式</small><b style="font-size:15px">${store.kind === 'firebase' ? 'Firebase 全場同步' : store.kind === 'cloud' ? '全場同步' : '本機（測試）'}</b></div>
     </div>
     ${(() => { const all = []; ROSTER.forEach(([id]) => Object.entries(flags(id)).forEach(([k, ts]) => { if (k !== 'solved' && FLAG_LABEL[k]) all.push([ts, k]); }));
       const last = all.length ? Math.max(...all.map(x => x[0])) : null, mins = last ? Math.round((Date.now() - last) / 60000) : null;
@@ -1729,7 +1739,7 @@ function dmPlayers(b){
     const sv = document.getElementById('saved'); if (sv) sv.textContent = ids.length ? '已儲存' : '沒有變更';
   });
   b.querySelectorAll('[data-reset]').forEach(x => x.addEventListener('click', () => confirmBox(x.closest('td'), `重設 ${x.dataset.reset} 的進度？他的手機會回到鎖定畫面，解開的謎題與發現全部清除。`, async () => {
-    await store.del('progress/' + x.dataset.reset); await store.del('votes/' + x.dataset.reset); logEvent('DM', `重設 ${x.dataset.reset} 的進度`, 0); })));
+    await store.del('progress/' + x.dataset.reset); await store.del('votes/' + x.dataset.reset); await store.del('monitor/' + x.dataset.reset); logEvent('DM', `重設 ${x.dataset.reset} 的進度`, 0); })));
 }
 function confirmBox(anchor, text, onYes){
   const c = $(`<div class="confirm"><p style="margin:0 0 8px;font-size:13px">${esc(text)}</p><button class="btn danger sm">確定</button> <button class="btn ghost sm">取消</button></div>`);
@@ -1818,21 +1828,22 @@ function dmReset(b){
   b.querySelector('#rv').addEventListener('click', () => confirmBox(b.querySelector('#r1'), '確定清空所有投票？', async () => { await store.clearPrefix('votes/'); logEvent('DM', '清空所有投票', 0); }));
   b.querySelector('#rp').addEventListener('click', () => confirmBox(b.querySelector('#r2'), '確定重設全部玩家進度？', async () => { await store.clearPrefix('progress/'); logEvent('DM', '重設全部玩家進度', 0); }));
   b.querySelector('#ra').addEventListener('click', () => confirmBox(b.querySelector('#r3'), '確定整場重來？這個動作無法復原。', async () => {
-    await store.clearPrefix('progress/'); await store.clearPrefix('votes/'); await store.clearPrefix('events/'); await store.set('game/state', { phase:'play', yaoHolder:null, announce:{ text:'', ts: Date.now() }, setup: game().setup || null, autoVote: game().autoVote !== false }); }));
+    await store.clearPrefix('progress/'); await store.clearPrefix('votes/'); await store.clearPrefix('events/'); await store.clearPrefix('monitor/'); await store.set('game/state', { phase:'play', yaoHolder:null, announce:{ text:'', ts: Date.now() }, setup: game().setup || null, autoVote: game().autoVote !== false }); }));
 }
 
 /* Firebase 資料層（正式場用；填入 FIREBASE_CONFIG 才會啟用） */
 function loadScript(src){ return new Promise((ok, no) => { const sc = document.createElement('script'); sc.src = src; sc.onload = ok; sc.onerror = no; document.head.appendChild(sc); }); }
 async function FirebaseStore(cfg){
-  await loadScript('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js');
-  await loadScript('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js');
+  await loadScript('https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-app-compat.js');
+  await loadScript('https://cdn.jsdelivr.net/npm/firebase@10.12.2/firebase-firestore-compat.js');
   const app = firebase.initializeApp(cfg), fs = firebase.firestore(app);
   return Cloud({
+    mergeSet: (p, d) => fs.doc(p).set(d, { merge: true }),
     collection: c => ({ onSnapshot: (n, e) => fs.collection(c).onSnapshot(snap => n({ docs: snap.docs.map(d => ({ id: d.id, exists: true, data: () => d.data() })) }), e),
       get: async () => { const snap = await fs.collection(c).get(); return { docs: snap.docs.map(d => ({ id: d.id })) }; },
       add: d => fs.collection(c).add(d) }),
     doc: p => ({ get: async () => { const x = await fs.doc(p).get(); return { exists: x.exists }; }, set: d => fs.doc(p).set(d), update: d => fs.doc(p).set(d, { merge: true }), delete: () => fs.doc(p).delete() }),
-  });
+  }, { kind: 'firebase', cols: S.dm ? ['game','progress','players','votes','events','monitor'] : ['game','progress','players','votes'] });
 }
 /* 啟動：接上資料層 */
 const syncDot = document.getElementById('sync');
