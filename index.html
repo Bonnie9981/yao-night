@@ -465,7 +465,7 @@ function Cloud(db, opt){
   }, () => {}); };
   (opt.cols || ['game','progress','players','events','votes','monitor']).forEach(listen);
   const docSubs = {};
-  const listenDoc = p => { if (!db.docSnap || docSubs[p]) return; docSubs[p] = db.docSnap(p, d => { if (d.exists) cache[p] = d.data(); else delete cache[p]; fire(); }); };
+  const listenDoc = (p, only) => { if (!db.docSnap || docSubs[p]) return; if (only) Object.keys(docSubs).forEach(k => { if (k.split('/')[0] === p.split('/')[0]) { docSubs[k](); delete docSubs[k]; delete cache[k]; } }); docSubs[p] = db.docSnap(p, d => { if (d.exists) cache[p] = d.data(); else delete cache[p]; fire(); }); };
   return {
     kind: opt.kind || 'cloud', listen, listenDoc: db.docSnap ? listenDoc : null,
     watch(fn){ subs.add(fn); fn({...cache}); return () => subs.delete(fn); },
@@ -485,7 +485,7 @@ const player = id => SH['players/' + id] || {};
 const flags = id => (prog(id) && prog(id).flags) || {};
 const rosterOf = id => (game().roster || {})[id] || {};
 function rosterSet(id, patch){ return store.merge('game/state', { roster: { [id]: Object.assign({}, rosterOf(id), patch) } }).catch(() => {}); }
-function listenOwn(id){ if (store.listenDoc) store.listenDoc('progress/' + id); }
+function listenOwn(id){ if (store.listenDoc) store.listenDoc('progress/' + id, true); }
 
 /* ============================== 本機狀態 ============================== */
 const LS = 'yao-proto-v2';
@@ -1775,7 +1775,7 @@ function dmOverview(b){
   b.querySelector('#sendann').addEventListener('click', async () => { const t = b.querySelector('#ann').value.trim(); if (!t) return; ANN_DRAFT = null; await store.merge('game/state', { announce: { text: t, ts: Date.now() } }); });
   b.querySelector('#clrann').addEventListener('click', async () => { ANN_DRAFT = null; await store.merge('game/state', { announce: { text: '', ts: Date.now() } }); });
 }
-const evRow = e => `<div><time>${esc(e.clock || '')}</time><span>${esc(e.role)} ${esc(e.role === 'DM' ? '' : (player(e.role).name || (ROSTER.find(x => x[0] === e.role) || [,''])[1]))}</span><span>${e.level ? `<span class="pill l${e.level}">${['','①','②','③'][e.level]}</span>` : ''}${esc(e.text)}</span></div>`;
+const evRow = e => `<div><time title="遊戲內時間 ${esc(e.clock || '')}">${e.ts ? new Date(e.ts).toTimeString().slice(0, 5) : esc(e.clock || '')}</time><span>${esc(e.role)} ${esc(e.role === 'DM' ? '' : (player(e.role).name || (ROSTER.find(x => x[0] === e.role) || [,''])[1]))}</span><span>${e.level ? `<span class="pill l${e.level}">${['','①','②','③'][e.level]}</span>` : ''}${esc(e.text)}</span></div>`;
 function dmPlayers(b){
   const rows = ROSTER.map(([id, t]) => {
     const p = prog(id), pl = player(id), f = flags(id);
