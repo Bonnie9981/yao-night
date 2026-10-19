@@ -293,6 +293,16 @@ input,select,textarea{font:inherit}
 .tgrp{font-size:11px;color:var(--mute);padding:8px 10px 2px;letter-spacing:.1em;white-space:nowrap;align-self:center}
 @media (min-width:900px){ .dmmain{flex-direction:row} .dmtabs{flex-direction:column;border-bottom:0;border-right:1px solid var(--line);width:150px;padding:10px 8px;overflow-y:auto} .dmtabs button{text-align:left} .tgrp{align-self:flex-start} }
 .dminput{background:#0b1214;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:8px}
+body:has(.phone.wide){padding:0}
+.phone.wide{max-width:none!important;height:100vh!important;border-radius:0!important;border:0!important;box-shadow:none}
+.phone.wide>.status{display:none}
+.dm .bar h2{white-space:nowrap}.dm .bar .syncl{margin-left:auto;white-space:nowrap;font-size:12px;color:var(--mute);display:flex;align-items:center;gap:6px}
+.dm .bar .syncl i{width:8px;height:8px;border-radius:50%;background:var(--mute)}.dm .bar .syncl.on i{background:var(--ok)}
+button.schip{text-align:left;cursor:pointer;transition:border-color .15s}button.schip:hover{border-color:var(--amber)}
+.dmdone{color:var(--ok);font-size:13px;margin-left:6px}
+.novote{display:flex;flex-wrap:wrap;gap:6px}.novote span{border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:12.5px}
+tr.npc td{opacity:.5}
+@media (max-width:899px){ .dmtabs{flex-wrap:wrap;overflow:visible;padding:6px 10px} .tgrp{display:none} .dmtabs button{padding:7px 10px} }
 .mlink{color:var(--amber);font-size:12px;margin-left:6px}
 .prevbar{background:#1f2b4a;border:1px solid #3f5a9a;color:#d6e2ff;border-radius:12px;padding:8px 10px;font-size:12.5px}
 /* DM：進度與監看 */
@@ -473,7 +483,7 @@ function Cloud(db, opt){
     async merge(path, data){ if (db.mergeSet) return db.mergeSet(path, data); const s = await db.doc(path).get(); return s.exists ? db.doc(path).update(data) : db.doc(path).set(data); },
     del(path){ return db.doc(path).delete(); },
     add(col, data){ return db.collection(col).add(data); },
-    async clearPrefix(prefix){ const col = prefix.replace(/\/$/, ''); const s = await db.collection(col).get(); for (const d of s.docs) await db.doc(col + '/' + d.id).delete(); },
+    async clearPrefix(prefix){ const col = prefix.replace(/\/$/, ''); const s = await db.collection(col).get(); const ids = s.docs.map(d => d.id); for (let i = 0; i < ids.length; i += 50) await Promise.all(ids.slice(i, i + 50).map(id => db.doc(col + '/' + id).delete())); },
   };
 }
 let store = Local;
@@ -1665,22 +1675,23 @@ function renderDM(){
   if (store.listen) { store.listen('events'); store.listen('monitor'); store.listen('progress'); }
   const tab = (t, n) => `<button role="tab" data-t="${t}">${n}</button>`;
   const el = $(`<div class="dm">
-    <div class="bar"><button id="dmout">‹ 登出</button><h2>DM 後台</h2></div>
+    <div class="bar"><button id="dmout">‹ 登出</button><h2>DM 後台</h2><span class="syncl" id="dmsync"><i></i><em style="font-style:normal"></em></span></div>
     <div class="dmstatus" id="dms"></div>
     <div class="dmmain"><div class="dmtabs" role="tablist">
       <span class="tgrp">開場前</span>${tab('setup','開場設定')}${tab('players','玩家姓名')}${tab('script','主持流程')}
       <span class="tgrp">進行中</span>${tab('overview','總覽')}${tab('progress','線索進度')}${tab('monitor','即時畫面')}${tab('events','事件紀錄')}
       <span class="tgrp">收尾</span>${tab('vote','投票')}${tab('answers','解答速查')}${tab('reset','重設')}
-      <span style="display:none"><button role="tab" data-t="events">事件紀錄</button>
-</span></div>
+</div>
     <div class="dmbody" id="dmb"></div></div></div>`);
   screen.appendChild(el);
   el.querySelector('#dmout').addEventListener('click', () => { dmRefresh = null; renderLock(); });
-  el.querySelectorAll('[data-t]').forEach(b => b.addEventListener('click', () => { dmTab = b.dataset.t; draw(); }));
+  el.querySelectorAll('[data-t]').forEach(b => b.addEventListener('click', () => { if (b.dataset.t !== dmTab) RESET_MSG = {}; dmTab = b.dataset.t; if (document.activeElement) document.activeElement.blur(); draw(); }));
+  el.querySelector('#dms').addEventListener('click', e => { const c = e.target.closest('[data-go]'); if (!c) return; dmTab = c.dataset.go; if (document.activeElement) document.activeElement.blur(); draw(); });
   const body = el.querySelector('#dmb');
   const draw = () => {
     el.querySelectorAll('[data-t]').forEach(b => b.setAttribute('aria-selected', b.dataset.t === dmTab));
     el.querySelector('#dms').innerHTML = dmStatusHTML(); dmAlerts();
+    const sy = el.querySelector('#dmsync'); sy.className = 'syncl ' + (store.kind === 'local' ? '' : 'on'); sy.querySelector('em').textContent = store.kind === 'firebase' ? 'Firebase 同步中' : store.kind === 'cloud' ? '全場同步' : '本機模式'; sy.title = store.kind === 'local' ? '本機模式：只會同步這台電腦上的分頁，玩家手機看不到。正式場請用 GitHub 網址。' : '所有手機即時同步';
     const keepFocus = document.activeElement && document.activeElement.closest('#dmb input,#dmb textarea');
     if (keepFocus) return;
     const sc = [body, body.parentElement, document.scrollingElement].map(x => x ? x.scrollTop : 0);
@@ -1727,30 +1738,25 @@ function dmProgress(b){
 let MON_FILTER = '';
 function dmMonitor(b){
   const ago = ts => { const s = Math.max(0, Math.round((Date.now() - ts) / 1000)); return s < 60 ? s + ' 秒前' : Math.round(s / 60) + ' 分鐘前'; };
-  const list = ROSTER.filter(([id]) => isActive(id) && prog(id) && prog(id).login).map(([id, t]) => [id, t, (mon(id).screen || {})]).sort((a, c) => (c[2].ts || 0) - (a[2].ts || 0))
-    .filter(([id, t]) => !MON_FILTER || (id + t + (player(id).name || '')).includes(MON_FILTER));
+  const list = ROSTER.filter(([id]) => isActive(id) && prog(id) && prog(id).login).map(([id, t]) => [id, t, (mon(id).screen || {})]).sort((a, c) => (c[2].ts || 0) - (a[2].ts || 0));
   b.append($(`<div class="mon"><p style="color:var(--mute);margin-top:0">每支手機目前打開的畫面（文字版。為了節省 Firebase 用量，每支手機最快 30 秒更新一次，畫面沒變就不更新）。最近有動作的排在前面。</p>
     <input id="mf" placeholder="搜尋角色或玩家姓名" value="${esc(MON_FILTER)}" style="background:#0b1214;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:8px;margin-bottom:10px;width:240px">
-    <div class="mongrid">${list.map(([id, t, sc]) => `<div class="moncard"><div class="monhd"><b>${id} ${esc(t)}</b><span>${esc(player(id).name || '')} <a href="${previewURL(id)}" target="_blank" rel="noopener" class="mlink">預覽</a></span></div>
+    <div class="mongrid">${list.map(([id, t, sc]) => `<div class="moncard" data-s="${esc(id + t + (player(id).name || ''))}"><div class="monhd"><b>${id} ${esc(t)}</b><span>${esc(player(id).name || '')} <a href="${previewURL(id)}" target="_blank" rel="noopener" class="mlink">預覽</a></span></div>
       <div class="monsub"><span class="pill ${sc.ts && Date.now() - sc.ts < 90000 ? 'on' : ''}">${esc(sc.title || '—')}</span><small>${sc.ts ? ago(sc.ts) : '還沒有畫面'}</small></div>
       <pre>${esc(sc.text || '')}</pre></div>`).join('') || '<p style="color:var(--mute)">還沒有人登入。</p>'}</div></div>`));
-  b.querySelector('#mf').addEventListener('input', e => { MON_FILTER = e.target.value.trim(); });
-  b.querySelector('#mf').addEventListener('change', () => { if (dmRefresh) { document.activeElement.blur(); dmRefresh(); } });
+  const mf = b.querySelector('#mf'), apply = () => { const q = MON_FILTER.toUpperCase(); b.querySelectorAll('.moncard').forEach(c => { c.hidden = !!q && !c.dataset.s.toUpperCase().includes(q); }); };
+  mf.addEventListener('input', () => { MON_FILTER = mf.value.trim(); apply(); }); mf.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === 'Escape') mf.blur(); }); apply();
 }
 const events = () => Object.entries(SH).filter(([k]) => k.startsWith('events/')).map(([,v]) => v).sort((a,b) => b.ts - a.ts);
 function dmOverview(b){
   const g = game(), activeN = ROSTER.filter(([id]) => isActive(id)).length, logged = ROSTER.filter(([id]) => isActive(id) && prog(id) && prog(id).login).length, votes = Object.keys(SH).filter(k => k.startsWith('votes/')).length;
   const discovered = new Set(); ROSTER.forEach(([id]) => Object.keys(flags(id)).forEach(f => discovered.add(f)));
-  const lv = l => [...discovered].filter(f => FLAG_LABEL[f] && FLAG_LABEL[f][1] === l).length;
+  const lv = l => [...discovered].filter(f => f !== 'solved' && FLAG_LABEL[f] && FLAG_LABEL[f][1] === l).length; const lt = l => Object.keys(FLAG_LABEL).filter(k => FLAG_LABEL[k][1] === l && k !== 'solved').length;
   b.append($(`<div>
     <div class="cards">
-      <div class="stat"><small>已登入角色</small><b>${logged}</b> / ${activeN}</div>
-      <div class="stat"><small>①錯誤時間 發現</small><b>${lv(1)}</b></div>
-      <div class="stat"><small>②翻盤 發現</small><b>${lv(2)}</b></div>
-      <div class="stat"><small>③真實時間 發現</small><b>${lv(3)}</b></div>
-      <div class="stat"><small>已投票</small><b>${votes}</b></div>
-      <div class="stat"><small>準備投票</small><b>${readyCount()[0]}</b> / ${readyCount()[1]}</div>
-      <div class="stat"><small>同步模式</small><b style="font-size:15px">${store.kind === 'firebase' ? 'Firebase 全場同步' : store.kind === 'cloud' ? '全場同步' : '本機（測試）'}</b></div>
+      <div class="stat"><small>①錯誤時間 發現</small><b>${lv(1)}</b> / ${lt(1)}</div>
+      <div class="stat"><small>②翻盤 發現</small><b>${lv(2)}</b> / ${lt(2)}</div>
+      <div class="stat"><small>③真實時間 發現</small><b>${lv(3)}</b> / ${lt(3)}</div>
     </div>
     ${(() => { const all = []; ROSTER.forEach(([id]) => Object.entries(flags(id)).forEach(([k, ts]) => { if (k !== 'solved' && FLAG_LABEL[k]) all.push([ts, k]); }));
       const last = all.length ? Math.max(...all.map(x => x[0])) : null, mins = last ? Math.round((Date.now() - last) / 60000) : null;
@@ -1768,23 +1774,27 @@ function dmOverview(b){
     <textarea class="ann" id="ann" placeholder="例：10 分鐘後開放投票，請準備。">${esc(ANN_DRAFT !== null ? ANN_DRAFT : ((g.announce && g.announce.text) || ''))}</textarea>
     <div style="display:flex;gap:8px;margin-top:8px"><button class="btn sm" id="sendann">發布公告</button><button class="btn ghost sm" id="clrann">清除公告</button></div>
     <h3 class="sec">最近事件</h3><div class="evlist">${events().slice(0,8).map(evRow).join('') || '<p style="color:var(--mute)">還沒有事件。</p>'}</div></div>`));
-  b.querySelectorAll('[data-ph]').forEach(x => x.addEventListener('click', async () => { await store.merge('game/state', { phase: x.dataset.ph }); if (x.dataset.ph !== 'play') clearReady(); logEvent('DM', '遊戲階段改為「' + x.textContent + '」', 0); }));
+  bindPhase(b);
   b.querySelector('#autov').addEventListener('click', async () => { const on = g.autoVote === false; await store.merge('game/state', { autoVote: on }); logEvent('DM', on ? '開啟自動開票' : '關閉自動開票', 0); });
-  b.querySelector('#setholder').addEventListener('click', async () => { const v = b.querySelector('#holder').value || null; await store.merge('game/state', { yaoHolder: v }); logEvent('DM', v ? `把曜曜的手機交給 ${v}` : '收回曜曜的手機', 2); });
+  b.querySelector('#setholder').addEventListener('click', async () => { const v = b.querySelector('#holder').value || null; await store.merge('game/state', { yaoHolder: v }); logEvent('DM', v ? `把曜曜的手機交給 ${v}` : '收回曜曜的手機', 2); toast('已指派', v ? `曜曜的手機現在在 ${BYID[v].title} 的桌面上。` : '曜曜的手機回到清潔人員桌面。', 'bell'); });
   b.querySelector('#ann').addEventListener('input', e => { ANN_DRAFT = e.target.value; });
-  b.querySelector('#sendann').addEventListener('click', async () => { const t = b.querySelector('#ann').value.trim(); if (!t) return; ANN_DRAFT = null; await store.merge('game/state', { announce: { text: t, ts: Date.now() } }); });
-  b.querySelector('#clrann').addEventListener('click', async () => { ANN_DRAFT = null; await store.merge('game/state', { announce: { text: '', ts: Date.now() } }); });
+  b.querySelector('#sendann').addEventListener('click', async () => { const t = b.querySelector('#ann').value.trim(); if (!t) { b.querySelector('#ann').focus(); return; } ANN_DRAFT = null; document.activeElement.blur(); await store.merge('game/state', { announce: { text: t, ts: Date.now() } }); toast('公告已發布', '所有手機都會跳出這則公告。', 'bell'); });
+  b.querySelector('#clrann').addEventListener('click', async () => { ANN_DRAFT = null; document.activeElement.blur(); await store.merge('game/state', { announce: { text: '', ts: Date.now() } }); toast('公告已清除', '玩家桌面不再顯示公告。', 'bell'); });
 }
+function bindPhase(b){ b.querySelectorAll('[data-ph]').forEach(x => x.addEventListener('click', () => {
+  const ph = x.dataset.ph, cur = game().phase || 'play'; if (ph === cur) return;
+  const go = async () => { await store.merge('game/state', { phase: ph }); if (ph !== 'play') clearReady(); logEvent('DM', '遊戲階段改為「' + x.textContent + '」', 0); toast('階段已切換', ph === 'vote' ? '所有手機出現投票 App。' : ph === 'reveal' ? '所有手機可以看真相與結局。' : '回到搜證。', 'bell'); };
+  if (ph === 'reveal' || cur === 'reveal') { if (!x.parentElement.querySelector('.confirm')) confirmBox(x.parentElement, ph === 'reveal' ? '確定揭曉真相？每支手機會立刻看到兇手和自己的結局，無法收回。' : '確定回到遊戲？玩家已經看過真相了。', go); } else go(); })); }
 const evRow = e => `<div><time title="遊戲內時間 ${esc(e.clock || '')}">${e.ts ? new Date(e.ts).toTimeString().slice(0, 5) : esc(e.clock || '')}</time><span>${esc(e.role)} ${esc(e.role === 'DM' ? '' : (player(e.role).name || (ROSTER.find(x => x[0] === e.role) || [,''])[1]))}</span><span>${e.level ? `<span class="pill l${e.level}">${['','①','②','③'][e.level]}</span>` : ''}${esc(e.text)}</span></div>`;
 function dmPlayers(b){
   const rows = ROSTER.map(([id, t]) => {
     const p = prog(id), pl = player(id), f = flags(id);
-    return `<tr><td><b>${id}</b><br><span style="color:var(--mute)">${esc(t)}</span>${id===KILLER?'<br><span class="pill l3">兇手</span>':''}${!isActive(id)?'<br><span class="pill">NPC（今晚沒人扮演）</span>':''}<br><span style="font-family:var(--f-mono);font-size:11.5px;color:var(--mute)">${BYID[id].key}</span>${BYID[id].merge?`<br><span class="pill">30人版併 ${BYID[id].merge}</span>`:''}</td>
+    return `<tr class="${isActive(id) ? '' : 'npc'}"><td><b>${id}</b><br><span style="color:var(--mute)">${esc(t)}</span>${id===KILLER?'<br><span class="pill l3">兇手</span>':''}${!isActive(id)?'<br><span class="pill">NPC（今晚沒人扮演）</span>':''}<br><span style="font-family:var(--f-mono);font-size:11.5px;color:var(--mute)">${BYID[id].key}</span>${BYID[id].merge?`<br><span class="pill">30人版併 ${BYID[id].merge}</span>`:''}</td>
       <td><input data-name="${id}" value="${esc(DRAFT[id] && DRAFT[id].name !== undefined ? DRAFT[id].name : (pl.name || ''))}" placeholder="玩家姓名" aria-label="${id} 玩家姓名"></td>
       <td><input data-photo="${id}" value="${esc(DRAFT[id] && DRAFT[id].photo !== undefined ? DRAFT[id].photo : (pl.photo || ''))}" placeholder="照片網址" aria-label="${id} 照片網址"></td>
       <td>${p && p.login ? '<span class="pill on">已登入</span>' : '<span class="pill">未登入</span>'}</td>
       <td>${Object.keys(f).map(k => FLAG_LABEL[k] ? `<span class="pill l${FLAG_LABEL[k][1]}">${FLAG_LABEL[k][0]}</span>` : '').join('') || '<span style="color:var(--mute)">—</span>'}</td>
-      <td><button class="btn ghost sm" data-reset="${id}">重設</button></td></tr>`;
+      <td>${p || rosterOf(id).login ? `<button class="btn ghost sm" data-reset="${id}">重設</button>` : ''}</td></tr>`;
   }).join('');
   b.append($(`<div><p style="color:var(--mute);margin-top:0">姓名與照片填完後按「儲存」，所有手機的身分文件和投票名單會同步更新。照片可以填圖片網址（例如 Gemini 生成後上傳到雲端的公開連結）。</p>
     <div style="margin-bottom:10px"><button class="btn sm" id="savepl">儲存姓名與照片</button> <span id="saved" style="color:var(--ok);font-size:13px"></span></div>
@@ -1815,13 +1825,16 @@ function confirmBox(anchor, text, onYes){
 }
 let EV_Q = '', EV_L = 0;
 function dmEvents(b){
-  const list = events().filter(e => (!EV_L || e.level >= EV_L) && (!EV_Q || ((BYID[e.role] ? BYID[e.role].title : e.role) + e.role + e.text + (player(e.role).name || '')).includes(EV_Q)));
+  const list = events().filter(e => !EV_L || e.level >= EV_L);
   b.append($(`<div><p style="color:var(--mute);margin-top:0">玩家在手機上做出的關鍵動作。①②③ 代表線索層級，可以看出全場推理到哪裡。</p>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"><input id="evq" placeholder="搜尋角色、玩家或內容" value="${esc(EV_Q)}" class="dminput"><select id="evl" class="dminput"><option value="0">全部事件</option><option value="1" ${EV_L==1?'selected':''}>只看線索 ①②③</option><option value="2" ${EV_L==2?'selected':''}>只看 ②③</option><option value="3" ${EV_L==3?'selected':''}>只看 ③</option></select><span style="color:var(--mute);font-size:12.5px;align-self:center">共 ${list.length} 筆</span></div>
-    <div class="evlist">${list.map(evRow).join('') || '<p style="color:var(--mute)">還沒有事件。</p>'}</div></div>`));
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"><input id="evq" placeholder="搜尋角色、玩家或內容" value="${esc(EV_Q)}" class="dminput"><select id="evl" class="dminput"><option value="0">全部事件</option><option value="1" ${EV_L==1?'selected':''}>只看線索 ①②③</option><option value="2" ${EV_L==2?'selected':''}>只看 ②③</option><option value="3" ${EV_L==3?'selected':''}>只看 ③</option></select><span id="evn" style="color:var(--mute);font-size:12.5px;align-self:center">共 ${list.length} 筆</span></div>
+    <div class="evlist" id="evall">${list.map(e => evRow(e).replace('<div>', `<div data-s="${esc((BYID[e.role] ? BYID[e.role].title : e.role) + e.role + e.text + (player(e.role).name || ''))}">`)).join('') || '<p style="color:var(--mute)">還沒有事件。</p>'}</div><p id="evnone" style="color:var(--mute)" hidden>沒有符合的事件。</p></div>`));
   bindEvFilter(b);
 }
-function bindEvFilter(b){ const q = b.querySelector('#evq'), l = b.querySelector('#evl'); if (q) { q.addEventListener('change', () => { EV_Q = q.value.trim(); q.blur(); if (dmRefresh) dmRefresh(); }); } if (l) l.addEventListener('change', () => { EV_L = +l.value; l.blur(); if (dmRefresh) dmRefresh(); }); }
+function bindEvFilter(b){ const q = b.querySelector('#evq'), l = b.querySelector('#evl');
+  const apply = () => { const k = EV_Q.toUpperCase(); let n = 0; b.querySelectorAll('#evall > [data-s]').forEach(r => { const hit = !k || r.dataset.s.toUpperCase().includes(k); r.hidden = !hit; if (hit) n++; }); const en = b.querySelector('#evn'); if (en) en.textContent = `共 ${n} 筆`; const no = b.querySelector('#evnone'); if (no) no.hidden = !(k && n === 0); };
+  if (q) { q.addEventListener('input', () => { EV_Q = q.value.trim(); apply(); }); q.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === 'Escape') q.blur(); }); }
+  if (l) l.addEventListener('change', () => { EV_L = +l.value; l.blur(); if (dmRefresh) dmRefresh(); }); apply(); }
 function dmVote(b){
   const vs = Object.entries(SH).filter(([k]) => k.startsWith('votes/')).map(([k,v]) => [k.slice(6), v.target]);
   const tally = {}; vs.forEach(([,t]) => tally[t] = (tally[t] || 0) + 1);
@@ -1830,8 +1843,11 @@ function dmVote(b){
   const vo = voteOutcome(), killerVotes = vo.e1, majority = vo.caught;
   b.append($(`<div>
     <div class="cards"><div class="stat"><small>已投票</small><b>${vs.length}</b></div><div class="stat"><small>投中兇手</small><b>${killerVotes}</b></div><div class="stat"><small>目前結果</small><b style="font-size:15px">${vs.length ? (majority ? '多數投中，玩家獲勝' : '兇手暫時逃過') : '—'}</b></div></div>
-    <div class="bars">${top.map(([id,n]) => `<div class="barrow"><span>${id} ${esc(player(id).name || (ROSTER.find(x=>x[0]===id)||[,''])[1])}</span><div class="track"><div class="fill" style="width:${n/max*100}%;${id===KILLER?'background:var(--alert)':''}"></div></div><span>${n}</span></div>`).join('') || '<p style="color:var(--mute)">還沒有人投票。到「總覽」切換成「開放投票」，玩家桌面會出現投票 App。</p>'}</div>
-    <h3 class="sec">誰投給誰</h3><div class="evlist">${vs.map(([v,t]) => `<div><span>${v}</span><span>${esc(player(v).name || '')}</span><span>→ ${t} ${esc((ROSTER.find(x=>x[0]===t)||[,''])[1])}</span></div>`).join('')}</div></div>`));
+    <div class="bars">${top.map(([id,n]) => `<div class="barrow"><span>${id} ${esc(player(id).name || (ROSTER.find(x=>x[0]===id)||[,''])[1])}</span><div class="track"><div class="fill" style="width:${n/max*100}%;${id===KILLER?'background:var(--alert)':''}"></div></div><span>${n}</span></div>`).join('') || '<p style="color:var(--mute)">還沒有人投票。按下方「開放投票」（或等三分之二玩家按準備自動開放），玩家桌面會出現投票 App。</p>'}</div>
+    <h3 class="sec">遊戲階段</h3><div class="phase">${[['play','進行中'],['vote','開放投票'],['reveal','揭曉真相']].map(([k,t]) => `<button data-ph="${k}" aria-pressed="${(game().phase||'play')===k}">${t}</button>`).join('')}</div>
+    ${(() => { const voted = new Set(vs.map(x => x[0])), left = ROSTER.filter(([id]) => isActive(id) && (rosterOf(id).login || (prog(id) && prog(id).login)) && !voted.has(id)); return `<h3 class="sec">已登入、還沒投票（${left.length}）</h3>${left.length ? `<div class="novote">${left.map(([id, t]) => `<span>${id} ${esc(player(id).name || t)}</span>`).join('')}</div>` : '<p style="color:var(--mute)">已登入的玩家都投了。</p>'}`; })()}
+    <h3 class="sec">誰投給誰</h3><div class="evlist">${vs.map(([v,t]) => `<div><span>${v}</span><span>${esc(player(v).name || (ROSTER.find(x=>x[0]===v)||[,''])[1])}</span><span>→ ${t} ${esc(player(t).name || (ROSTER.find(x=>x[0]===t)||[,''])[1])}</span></div>`).join('') || '<p style="color:var(--mute)">—</p>'}</div></div>`));
+  bindPhase(b);
 }
 let SETUP_DRAFT = null;
 function dmSetup(b){
@@ -1859,9 +1875,9 @@ function dmStatusHTML(){
   const all = []; ROSTER.forEach(([id]) => Object.entries(flags(id)).forEach(([k, ts]) => { if (k !== 'solved' && FLAG_LABEL[k]) all.push(ts); })); Object.entries(g.gflags || {}).forEach(([k, ts]) => { if (k !== 'solved' && FLAG_LABEL[k]) all.push(ts); });
   const stall = all.length ? Math.round((Date.now() - Math.max(...all)) / 60000) : null, [rn, rt] = readyCount(), vo = voteOutcome();
   const ph = { play: '搜證中', vote: '投票中', reveal: '已揭曉' }[g.phase || 'play'];
-  const chip = (label, val, cls) => `<div class="schip ${cls || ''}"><small>${label}</small><b>${val}</b></div>`;
-  return chip('階段', ph, 'ph-' + (g.phase || 'play')) + chip('遊戲時間', mins === null ? '—' : `${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')}`) + chip('已登入', `${logged} / ${act.length}`)
-    + chip('準備投票', `${rn} / ${rt}`) + chip('已投票', vo.total) + chip('曜曜的手機', esc(BYID[g.yaoHolder || 'F5'].title)) + chip('上次關鍵發現', stall === null ? '—' : stall + ' 分鐘前', stall !== null && stall >= 10 ? 'warn' : '');
+  const chip = (label, val, cls, go) => `<button class="schip ${cls || ''}" data-go="${go}" title="點一下打開相關分頁"><small>${label}</small><b>${val}</b></button>`;
+  return chip('階段', ph, 'ph-' + (g.phase || 'play'), 'overview') + chip('遊戲時間', mins === null ? '—' : `${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')}`, '', 'events') + chip('已登入', `${logged} / ${act.length}`, '', 'monitor')
+    + chip('準備投票', `${rn} / ${rt}`, '', 'vote') + chip('已投票', vo.total, '', 'vote') + chip('曜曜的手機', esc(BYID[g.yaoHolder || 'F5'].title), '', 'overview') + chip('上次關鍵發現', stall === null ? '—' : stall + ' 分鐘前', stall !== null && stall >= 10 ? 'warn' : '', 'progress');
 }
 /* DM 重要事件提醒 */
 let DM_LAST_EV = Date.now();
@@ -1871,7 +1887,7 @@ function dmScript(b){
   const step = (n, t, d, read) => `<div class="step"><div class="stepn">${n}</div><div><h4>${t}</h4><p>${d}</p>${read ? `<blockquote>${read}</blockquote>` : ''}</div></div>`;
   b.append($(`<div class="script">
     <p style="color:var(--mute);margin-top:0">建議流程。時間只是參考，劇情推進交給玩家。</p>
-    ${step(1,'開場前（DM 自己）','正式開場前先到「重設」按一次「全部重設」，清掉測試資料。再到「開場設定」輸入今晚人數並套用，系統會決定要留的角色、列出每位玩家的金鑰。再到「玩家與進度」填好姓名。兇手人選要先私下說明；重口味角色（攝影師、對手網紅、私生飯等）先私下確認玩家願意接。')}
+    ${step(1,'開場前（DM 自己）','正式開場前先到「重設」按一次「全部重設（整場重來）」，清掉測試資料。再到「開場設定」輸入今晚人數並套用，系統會決定要留的角色、列出每位玩家的金鑰。再到「玩家姓名」填好姓名並按「儲存姓名與照片」。兇手人選要先私下說明；重口味角色（攝影師、對手網紅、私生飯等）先私下確認玩家願意接。')}
     ${step(2,'發金鑰、登入（約 5 分鐘）','每人一組四位數金鑰，打開網址登入。提醒大家先看「案件簡報」。','')}
     ${step(3,'開場朗讀','用你的聲音把案件經過唸一次，營造氣氛。','「今晚，十週年見面會。大霧、豪雨，下山的路被落石封住。23:15，曜曜被發現倒在二樓休息室，背後插著一把刀。警察天亮才能上山。在那之前——兇手，就在你們之中。」')}
     ${step(4,'閱讀身分文件（10～15 分鐘）','每人讀自己的身分文件、試著解開個人線索。這段時間只回答「看不懂」的問題。')}
@@ -1904,18 +1920,22 @@ function dmAnswers(b){
       <div><time>23:12</time><span>廠商代表</span><span>手機丟進一樓男廁水箱</span></div>
       <div><time>23:15</time><span>助理</span><span>發現遺體</span></div></div></div>`));
 }
+let RESET_MSG = {};
 function dmReset(b){
   b.append($(`<div>
     <h3 class="sec" style="margin-top:0">重設</h3>
     <div style="display:flex;flex-direction:column;gap:12px;align-items:flex-start">
       <div id="r1"><button class="btn ghost" id="rv">清空所有投票</button><p style="color:var(--mute);font-size:12.5px;margin:4px 0 0">保留進度，只清除投票。</p></div>
       <div id="r2"><button class="btn ghost" id="rp">重設全部玩家進度</button><p style="color:var(--mute);font-size:12.5px;margin:4px 0 0">所有手機回到鎖定畫面，謎題與發現全部清除；保留玩家姓名與照片。</p></div>
-      <div id="r3"><button class="btn danger" id="ra">整場重來</button><p style="color:var(--mute);font-size:12.5px;margin:4px 0 0">清除進度、投票、事件紀錄、公告、手機持有者；遊戲階段回到「進行中」。保留玩家姓名與照片。</p></div>
+      <div id="r3"><button class="btn danger" id="ra">全部重設（整場重來）</button><p style="color:var(--mute);font-size:12.5px;margin:4px 0 0">清除進度、投票、事件紀錄、公告、手機持有者；遊戲階段回到「進行中」。保留玩家姓名與照片。</p></div>
     </div></div>`));
-  b.querySelector('#rv').addEventListener('click', () => confirmBox(b.querySelector('#r1'), '確定清空所有投票？', async () => { await store.clearPrefix('votes/'); logEvent('DM', '清空所有投票', 0); }));
-  b.querySelector('#rp').addEventListener('click', () => confirmBox(b.querySelector('#r2'), '確定重設全部玩家進度？', async () => { await store.clearPrefix('progress/'); await store.clearPrefix('monitor/'); await store.clearPrefix('votes/'); await store.set('game/state', Object.assign({}, game(), { roster: {}, gflags: {}, yaoHolder: null, phase: 'play' })); logEvent('DM', '重設全部玩家進度', 0); }));
-  b.querySelector('#ra').addEventListener('click', () => confirmBox(b.querySelector('#r3'), '確定整場重來？這個動作無法復原。', async () => {
-    await store.clearPrefix('progress/'); await store.clearPrefix('votes/'); await store.clearPrefix('events/'); await store.clearPrefix('monitor/'); await store.set('game/state', { phase:'play', yaoHolder:null, announce:{ text:'', ts: Date.now() }, setup: game().setup || null, autoVote: game().autoVote !== false }); }));
+  Object.entries(RESET_MSG).forEach(([id, m]) => { const box = b.querySelector('#' + id); if (box) box.querySelector('.btn').after($(`<span class="dmdone" style="${m[1] ? 'color:var(--alert)' : ''}">${esc(m[0])}</span>`)); });
+  const busy = async (box, fn, done) => { RESET_MSG = { [box.id]: ['處理中…'] }; box.querySelectorAll('.dmdone').forEach(x => x.remove()); box.querySelector('.btn').after($(`<span class="dmdone">處理中…</span>`));
+    try { await fn(); RESET_MSG = { [box.id]: ['✓ ' + done] }; toast('完成', done, 'bell'); } catch(e) { RESET_MSG = { [box.id]: ['失敗了，請檢查網路後再按一次。', 1] }; } if (dmRefresh) dmRefresh(); };
+  b.querySelector('#rv').addEventListener('click', () => confirmBox(b.querySelector('#r1'), '確定清空所有投票？', () => busy(b.querySelector('#r1'), async () => { await store.clearPrefix('votes/'); logEvent('DM', '清空所有投票', 0); }, '投票已清空')));
+  b.querySelector('#rp').addEventListener('click', () => confirmBox(b.querySelector('#r2'), '確定重設全部玩家進度？', () => busy(b.querySelector('#r2'), async () => { await store.clearPrefix('progress/'); await store.clearPrefix('monitor/'); await store.clearPrefix('votes/'); await store.set('game/state', Object.assign({}, game(), { roster: {}, gflags: {}, yaoHolder: null, phase: 'play' })); logEvent('DM', '重設全部玩家進度', 0); }, '全部玩家進度已重設')));
+  b.querySelector('#ra').addEventListener('click', () => confirmBox(b.querySelector('#r3'), '確定全部重設？這個動作無法復原。', () => busy(b.querySelector('#r3'), async () => {
+    for (const x of ['progress/', 'votes/', 'events/', 'monitor/']) await store.clearPrefix(x); await store.set('game/state', { phase:'play', yaoHolder:null, announce:{ text:'', ts: Date.now() }, setup: game().setup || null, autoVote: game().autoVote !== false }); }, '已全部重設，可以開場了')));
 }
 
 /* Firebase 資料層（正式場用；填入 FIREBASE_CONFIG 才會啟用） */
