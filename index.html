@@ -65,6 +65,9 @@ input,select,textarea{font:inherit}
 .badge{position:absolute;top:-5px;right:-5px;background:var(--alert);color:#fff;font-size:11px;font-weight:700;border-radius:10px;padding:1px 6px}
 .dock{margin-top:auto;display:flex;justify-content:space-around;background:var(--glass);border:1px solid var(--line);border-radius:26px;padding:12px 8px}
 .hbtns{margin-left:auto;display:flex;gap:6px;align-items:center}
+.pager{display:flex;gap:4px;background:rgba(0,0,0,.25);border:1px solid var(--line);border-radius:12px;padding:3px}
+.pager button{flex:1;padding:7px 6px;border-radius:9px;font-size:13px;color:var(--mute)}
+.pager button[aria-selected="true"]{background:var(--amber);color:#2a1a04;font-weight:700}
 .ibtn{position:relative;width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:var(--glass);color:var(--ink);display:grid;place-items:center;font-size:12px;font-weight:700}
 .ibtn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8}
 .ibtn .cnt{position:absolute;top:-4px;right:-4px;min-width:16px;height:16px;border-radius:8px;background:#ff3b30;color:#fff;font-size:10px;display:grid;place-items:center;padding:0 3px}
@@ -542,7 +545,8 @@ function planFor(n){ n = Math.max(SETUP_MIN, Math.min(40, n | 0));
   ROSTER.forEach(([id]) => { if (drop.includes(id) || inM.has(id)) return; groups.push([id]); });
   merges.forEach(m => groups.push(m)); groups.sort((a, b) => a[0].localeCompare(b[0]));
   return { n, drop, groups }; }
-const setup = () => game().setup || null;
+const setup = () => { const st = game().setup; if (!st) return null; return Object.assign({}, st, { drop: st.drop || [], groups: (st.groups || []).map(g => Array.isArray(g) ? g : String(g).split('+')) }); };
+const groupOf = id => { const st = setup(); const g = st && st.groups.find(x => x.includes(id)); return g && g.length > 1 ? g : [id]; };
 const isActive = id => { const st = setup(); return !st || !st.drop.includes(id); };
 const personKey = id => { const st = setup(); if (st) { const g = st.groups.find(x => x.includes(id)); if (g) return 'P:' + g.join('+'); } return ((player(id).name || '').trim()) || id; };
 const readyCount = () => { const act = ROSTER.filter(([id]) => isActive(id) && rosterOf(id).login);
@@ -593,9 +597,10 @@ function renderLock(){
     if (ROLES[k] && !isActive(ROLES[k].id)) { el.querySelector('#lerr').textContent = '這個角色今晚沒有人扮演（NPC）。請跟 DM 確認你的金鑰。'; return; }
     if (ROLES[k]) {
       S.key = k; save(); const id = ROLES[k].id;
-      listenOwn(id); const was = rosterOf(id).login;
-      try { await store.merge('progress/' + id, { login: true, lastSeen: Date.now() }); } catch(e) {}
-      if (!was) { rosterSet(id, { login: Date.now() }); logEvent(id, '登入手機', 0); }
+      listenOwn(id);
+      for (const gid of groupOf(id)) { const was = rosterOf(gid).login;
+        try { await store.merge('progress/' + gid, { login: true, lastSeen: Date.now() }); } catch(e) {}
+        if (!was) { await rosterSet(gid, { login: Date.now() }); logEvent(gid, groupOf(id).length > 1 ? '登入手機（一人兩角）' : '登入手機', 0); } }
       lastProgSig = null; renderHome();
     } else el.querySelector('#lerr').textContent = '金鑰錯誤，請確認發給你的四位數身分金鑰。';
   });
@@ -622,16 +627,22 @@ function renderHome(){
     <div class="who"><div class="ava">${portraitHTML(r.id, p.photo)}</div>
       <div><b>${esc(p.name || '（玩家姓名）')}</b><span>${esc(r.title)}・${r.key}</span></div>
       <div class="hbtns"><button class="ibtn" id="nbell" aria-label="通知">${ICONS.bell}<span class="cnt" ${NOTIFS.length ? '' : 'hidden'}>${NOTIFS.length}</span></button><button class="ibtn" id="fsz" aria-label="調整字級">Aa</button><button class="btn ghost sm" id="logout">登出</button></div></div>
+    ${groupOf(r.id).length > 1 ? `<div class="pager" role="tablist">${groupOf(r.id).map(id => `<button role="tab" data-pg="${id}" aria-selected="${id === r.id}">${esc(BYID[id].title)}</button>`).join('')}</div>` : ''}
     ${prevBar}${ann}${widget}
     <div class="grid">${gridIds.map(appBtn).join('')}</div>
     <div class="dock">${dockIds.map(appBtn).join('')}</div></div>`);
   screen.appendChild(el);
   el.querySelectorAll('[data-app]').forEach(b => b.addEventListener('click', () => openApp(b.dataset.app)));
   el.querySelector('#logout').addEventListener('click', () => { S.key = null; save(); renderLock(); });
+  el.querySelectorAll('[data-pg]').forEach(b => b.addEventListener('click', () => switchPage(b.dataset.pg)));
+  if (groupOf(r.id).length > 1) { let x0 = null, y0 = 0; el.addEventListener('touchstart', e => { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; }, { passive: true });
+    el.addEventListener('touchend', e => { if (x0 === null) return; const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0; x0 = null; if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) { const g = groupOf(r.id), i = g.indexOf(r.id); switchPage(g[(i + (dx < 0 ? 1 : g.length - 1)) % g.length]); } }); }
   el.querySelector('#nbell').addEventListener('click', () => win('通知', $(`<div>${NOTIFS.length ? NOTIFS.map(n => `<div class="note"><div class="meta">${esc(n.t)}</div><h3>${esc(n.title)}</h3><p>${esc(n.text || '')}</p></div>`).join('') : '<p style="color:var(--mute)">還沒有通知。</p>'}</div>`), renderHome));
   el.querySelector('#fsz').addEventListener('click', () => { const z = { '1': '1.12', '1.12': '1.25', '1.25': '1' }[localGet('yao-fsz') || '1'] || '1'; localSet('yao-fsz', z); applyFsz(); toast('字級已調整', z === '1' ? '標準' : z === '1.12' ? '大' : '特大', 'note'); });
-  if (!PREVIEW && !localGet('yao-onb-' + r.id) && !phone.querySelector('.onb')) onboarding(r);
+  if (!PREVIEW && !groupOf(r.id).some(id => localGet('yao-onb-' + id)) && !phone.querySelector('.onb')) onboarding(r);
 }
+function switchPage(id){ const r = role(); if (!r || r.id === id || !groupOf(r.id).includes(id)) return;
+  S.key = BYID[id].key; if (!PREVIEW) save(); lastProgSig = null; listenOwn(id); document.querySelectorAll('.win,.calling').forEach(w => w.remove()); renderHome(); }
 const localGet = k => { try { return localStorage.getItem(k); } catch(e) { return null; } };
 const localSet = (k, v) => { try { localStorage.setItem(k, v); } catch(e) {} };
 function applyFsz(){ phone.style.setProperty('--fz', localGet('yao-fsz') || '1'); }
@@ -1221,7 +1232,7 @@ function appVote(r){
     ${ROSTER.map(([id, t]) => `<label><input type="radio" name="v" value="${id}" ${mine && mine.target === id ? 'checked' : ''}> ${esc((player(id).name ? player(id).name + '・' : '') + t)}${isActive(id) ? '' : '（NPC）'}</label>`).join('')}
     <button class="btn" type="submit" style="margin-top:8px">送出投票</button><div class="err" id="ve"></div></form>`);
   f.addEventListener('submit', async e => { e.preventDefault(); const v = f.querySelector('input[name=v]:checked'); if (!v) { f.querySelector('#ve').textContent = '請先選一個人。'; return; }
-    try { await store.set('votes/' + r.id, { target: v.value, ts: Date.now() }); toast('已送出投票', '可以在 DM 揭曉前修改。', 'vote'); } catch(err) { f.querySelector('#ve').textContent = '送出失敗，請再試一次。'; } });
+    try { for (const gid of groupOf(r.id)) await store.set('votes/' + gid, { target: v.value, ts: Date.now() }); toast('已送出投票', '可以在 DM 揭曉前修改。', 'vote'); } catch(err) { f.querySelector('#ve').textContent = '送出失敗，請再試一次。'; } });
   win('投票', f, renderHome);
 }
 
@@ -1581,9 +1592,9 @@ function appBrief(){
     <h3>遊戲規則</h3><ol>${BRIEF.rules.map(x => `<li>${esc(x)}</li>`).join('')}</ol>
     ${setup() && setup().drop.length ? `<h3>今晚沒有玩家扮演的人</h3><p>${setup().drop.map(id => esc(BYID[id].title)).join('、')}。他們今晚也在會館裡，但沒有人扮演；他們做過的事，只能從別人的手機和證詞得知。</p>` : ''}
     <p class="briefstate">目前階段：${g.phase === 'vote' ? '開放投票' : g.phase === 'reveal' ? '真相揭曉' : '搜證中'}</p>
-    ${(g.phase || 'play') === 'play' && role() ? (() => { const [n, t] = readyCount(), me = rosterOf(role().id).ready, need = Math.max(2, Math.ceil(t * VOTE_RATIO));
+    ${(g.phase || 'play') === 'play' && role() ? (() => { const [n, t] = readyCount(), me = groupOf(role().id).some(x => rosterOf(x).ready), need = Math.max(2, Math.ceil(t * VOTE_RATIO));
       return `<div class="readybox"><b>準備投票</b><p>${n} / ${t} 位玩家覺得可以投票了。${g.autoVote === false ? '目前由 DM 決定何時開放投票。' : `達到 ${need} 人就會自動開放投票。`}</p><button class="btn ${me ? 'ghost' : ''}" id="rdy">${me ? '我還想再查（取消）' : '我覺得可以投票了'}</button></div>`; })() : ''}</div>`), renderHome);
-  const rb = document.querySelector('#rdy'); if (rb) rb.addEventListener('click', async () => { const id = role().id, me = rosterOf(id).ready; await rosterSet(id, { ready: !me }); logEvent(id, me ? '取消準備投票' : '表示準備好投票', 0); setTimeout(() => { document.querySelectorAll('.win').forEach(w => w.remove()); appBrief(); }, 120); });
+  const rb = document.querySelector('#rdy'); if (rb) rb.addEventListener('click', async () => { const id = role().id, me = groupOf(id).some(x => rosterOf(x).ready); for (const gid of groupOf(id)) await rosterSet(gid, { ready: !me }); logEvent(id, me ? '取消準備投票' : '表示準備好投票', 0); setTimeout(() => { document.querySelectorAll('.win').forEach(w => w.remove()); appBrief(); }, 120); });
 }
 function appMemo(r){
   const k = 'yao-memo-' + r.id; let v = ''; try { v = localStorage.getItem(k) || ''; } catch(e) {}
@@ -1834,8 +1845,8 @@ function dmVote(b){
 let SETUP_DRAFT = null;
 function dmSetup(b){
   const cur = setup(), n0 = SETUP_DRAFT !== null ? SETUP_DRAFT : (cur ? cur.n : 40);
-  const row = (g, i) => `<tr><td><b>玩家 ${i + 1}</b></td><td>${g.map(id => `${id}　${esc(BYID[id].title)}${id === KILLER ? ' <span class="pill l3">兇手</span>' : ''}`).join('<br>')}</td><td style="font-family:var(--f-mono)">${g.map(id => BYID[id].key).join('<br>')}</td><td>${g.length > 1 ? '<span class="pill">一人兩角</span>' : ''}</td></tr>`;
-  const preview = n => { const plan = planFor(n), text = plan.groups.map((g, i) => `玩家${i + 1}：` + g.map(id => `${BYID[id].title}（${BYID[id].key}）`).join(' ＋ ')).join('\n');
+  const row = (g, i) => `<tr><td><b>玩家 ${i + 1}</b></td><td>${g.map(id => `${id}　${esc(BYID[id].title)}${id === KILLER ? ' <span class="pill l3">兇手</span>' : ''}`).join('<br>')}</td><td style="font-family:var(--f-mono);font-size:15px"><b>${BYID[g[0]].key}</b></td><td>${g.length > 1 ? '<span class="pill">一人兩角・手機有兩頁</span>' : ''}</td></tr>`;
+  const preview = n => { const plan = planFor(n), text = plan.groups.map((g, i) => `玩家${i + 1}：金鑰 ${BYID[g[0]].key}　` + g.map(id => BYID[id].title).join(' ＋ ')).join('\n');
     return `${plan.drop.length ? `<h3 class="sec">改成 NPC 的角色（${plan.drop.length}）</h3><p>${plan.drop.map(id => `${id} ${esc(BYID[id].title)}`).join('、')}</p><p style="color:var(--mute);font-size:12.5px">NPC 的金鑰不能登入，但仍在投票名單上（標示 NPC），因為他們今晚也在會館裡。玩家問到 NPC 時，你只回答「他今晚沒有人扮演」，不要替他說話。</p>` : ''}
     <h3 class="sec">發給玩家的金鑰（${plan.groups.length} 位玩家）</h3>
     <div class="tblwrap"><table class="tbl"><thead><tr><th>玩家</th><th>角色</th><th>金鑰</th><th></th></tr></thead><tbody>${plan.groups.map(row).join('')}</tbody></table></div>
@@ -1845,20 +1856,20 @@ function dmSetup(b){
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><label for="sn">玩家人數</label><input id="sn" type="number" min="${SETUP_MIN}" max="40" value="${planFor(n0).n}" style="width:90px;background:#0b1214;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:8px">
       <button class="btn sm" id="sapply">套用這個配置</button><span id="scur" style="color:var(--mute);font-size:12.5px">${cur ? `目前套用：${cur.n} 人` : '目前：40 人全開（未設定）'}</span></div>
     <div id="sprev">${preview(n0)}</div>
-    <p style="color:var(--mute);font-size:12.5px">一人兩角的玩家拿兩組金鑰：先用第一組登入看完，登出再用第二組。兩個角色各自保密，但投票和「準備投票」只算一個人。</p></div>`));
+    <p style="color:var(--mute);font-size:12.5px">一人兩角的玩家只拿一組金鑰。登入後手機桌面上方有兩個分頁，可以點或左右滑動切換兩個角色。兩個角色的線索各自記錄；投票和「準備投票」算同一個人，在任一頁投都算數。</p></div>`));
   const sn = b.querySelector('#sn');
   sn.addEventListener('input', () => { SETUP_DRAFT = +sn.value || 40; b.querySelector('#sprev').innerHTML = preview(SETUP_DRAFT); });
-  b.querySelector('#sapply').addEventListener('click', async () => { const p = planFor(+sn.value || 40); await store.merge('game/state', { setup: { n: p.n, drop: p.drop, groups: p.groups } }); SETUP_DRAFT = null; logEvent('DM', `開場設定：${p.n} 位玩家（NPC ${p.drop.length} 位）`, 0); });
+  b.querySelector('#sapply').addEventListener('click', async () => { const p = planFor(+sn.value || 40); try { await store.set('game/state', Object.assign({}, game(), { setup: { n: p.n, drop: p.drop, groups: p.groups.map(g => g.join('+')) } })); } catch(err) { toast('套用失敗', '請檢查網路後再按一次。', 'bell'); return; } toast('已套用', `${p.n} 位玩家；NPC ${p.drop.length} 位，一人兩角 ${p.groups.filter(g => g.length > 1).length} 位。`, 'bell'); SETUP_DRAFT = null; logEvent('DM', `開場設定：${p.n} 位玩家（NPC ${p.drop.length} 位）`, 0); });
 }
 /* DM 常駐狀態列 */
 function dmStatusHTML(){
-  const g = game(), act = ROSTER.filter(([id]) => isActive(id)), logged = act.filter(([id]) => rosterOf(id).login || (prog(id) && prog(id).login)).length;
+  const g = game(), act = ROSTER.filter(([id]) => isActive(id)), people = new Set(act.map(([id]) => personKey(id))), logged = new Set(act.filter(([id]) => rosterOf(id).login || (prog(id) && prog(id).login)).map(([id]) => personKey(id))).size;
   const firstLogin = Math.min(...act.map(([id]) => rosterOf(id).login || Infinity)), mins = isFinite(firstLogin) ? Math.floor((Date.now() - firstLogin) / 60000) : null;
   const all = []; ROSTER.forEach(([id]) => Object.entries(flags(id)).forEach(([k, ts]) => { if (k !== 'solved' && FLAG_LABEL[k]) all.push(ts); })); Object.entries(g.gflags || {}).forEach(([k, ts]) => { if (k !== 'solved' && FLAG_LABEL[k]) all.push(ts); });
   const stall = all.length ? Math.round((Date.now() - Math.max(...all)) / 60000) : null, [rn, rt] = readyCount(), vo = voteOutcome();
   const ph = { play: '搜證中', vote: '投票中', reveal: '已揭曉' }[g.phase || 'play'];
   const chip = (label, val, cls, go) => `<button class="schip ${cls || ''}" data-go="${go}" title="點一下打開相關分頁"><small>${label}</small><b>${val}</b></button>`;
-  return chip('階段', ph, 'ph-' + (g.phase || 'play'), 'overview') + chip('遊戲時間', mins === null ? '—' : `${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')}`, '', 'events') + chip('已登入', `${logged} / ${act.length}`, '', 'players')
+  return chip('階段', ph, 'ph-' + (g.phase || 'play'), 'overview') + chip('遊戲時間', mins === null ? '—' : `${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')}`, '', 'events') + chip('已登入', `${logged} / ${setup() ? setup().groups.length : people.size}`, '', 'players')
     + chip('準備投票', `${rn} / ${rt}`, '', 'vote') + chip('已投票', vo.total, '', 'vote') + chip('曜曜的手機', esc(BYID[g.yaoHolder || 'F5'].title), '', 'overview') + chip('上次關鍵發現', stall === null ? '—' : stall + ' 分鐘前', stall !== null && stall >= 10 ? 'warn' : '', 'progress');
 }
 /* DM 重要事件提醒 */
