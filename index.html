@@ -303,6 +303,9 @@ body:has(.phone.wide){padding:0}
 .dm .bar .syncl i{width:8px;height:8px;border-radius:50%;background:var(--mute)}.dm .bar .syncl.on i{background:var(--ok)}
 button.schip{text-align:left;cursor:pointer;transition:border-color .15s}button.schip:hover{border-color:var(--amber)}
 .dmdone{color:var(--ok);font-size:13px;margin-left:6px}
+.npclist{display:flex;flex-direction:column;gap:10px}.npccard{border:1px solid var(--line);border-radius:14px;padding:12px 14px;background:rgba(255,255,255,.02)}.npccard.hit{border-color:rgba(240,180,90,.6)}
+.npchd{display:flex;gap:10px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap}.npchd small{display:block;color:var(--mute);margin-top:2px}.npcst{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.npcbd h4{margin:14px 0 6px;font-size:13px;color:var(--amber)}.npcqa{border-left:2px solid var(--line);padding:2px 0 2px 10px;margin:6px 0}.npcqa p{margin:3px 0 0;color:#cfdde0;font-size:13px}.npcn{color:var(--mute);font-size:12px;margin-left:8px}.npcqa code{background:rgba(255,255,255,.07);padding:1px 6px;border-radius:6px;font-size:12px}
 .novote{display:flex;flex-wrap:wrap;gap:6px}.novote span{border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:12.5px}
 tr.npc td{opacity:.5}
 @media (max-width:899px){ .dmtabs{flex-wrap:wrap;overflow:visible;padding:6px 10px} .tgrp{display:none} .dmtabs button{padding:7px 10px} }
@@ -514,7 +517,7 @@ const phone = document.getElementById('phone');
 const role = () => ROLES[S.key];
 const nowHM = () => document.getElementById('clock').textContent;
 
-async function logEvent(roleId, text, level){ try { await store.add('events', { ts: Date.now(), clock: nowHM(), role: roleId, text, level: level || 0 }); } catch(e) {} }
+async function logEvent(roleId, text, level, extra){ try { await store.add('events', Object.assign({ ts: Date.now(), clock: nowHM(), role: roleId, text, level: level || 0 }, extra || {})); } catch(e) {} }
 async function setFlag(roleId, key, text, level){
   const f = Object.assign({}, flags(roleId)); if (f[key]) return; f[key] = Date.now();
   try { await store.merge('progress/' + roleId, { flags: f, lastSeen: Date.now() }); } catch(e) {}
@@ -1210,10 +1213,10 @@ function npcTalk(r, id){
   const n = NPC[id], w = $(`<div class="npc"><div class="note"><div class="meta">他自我介紹時說</div><p>「${esc(n.pub)}」</p></div><div class="qs"></div><div class="log npclog"></div>
     <form class="field" id="np"><input id="nq" placeholder="追問：輸入你手上的證據關鍵字" aria-label="追問關鍵字" style="text-transform:none"><button class="btn" type="submit">追問</button></form></div>`);
   const log = w.querySelector('.npclog'), say = (q, a) => { log.prepend($(`<div><time>${esc(nowHM())}</time><span><b>你：</b>${esc(q)}<br><b>${esc(BYID[id].title)}：</b>${esc(a)}</span></div>`)); };
-  n.qa.forEach(([q, a]) => { const b = $(`<button class="btn ghost sm" style="margin:0 6px 6px 0">${esc(q)}</button>`); b.addEventListener('click', () => { say(q, a); logEvent(r.id, `問 NPC ${BYID[id].title}：${q}`, 0); track('npc:' + id); snapScreen(); }); w.querySelector('.qs').appendChild(b); });
+  n.qa.forEach(([q, a]) => { const b = $(`<button class="btn ghost sm" style="margin:0 6px 6px 0">${esc(q)}</button>`); b.addEventListener('click', () => { say(q, a); logEvent(r.id, `問 NPC ${BYID[id].title}：${q}`, 0, { npc: id, q }); track('npc:' + id); snapScreen(); }); w.querySelector('.qs').appendChild(b); });
   w.querySelector('#np').addEventListener('submit', e => { e.preventDefault(); const q = w.querySelector('#nq').value.trim(); if (!q) return;
     const hit = (n.press || []).find(([ks]) => ks.some(k => q.toLowerCase().includes(k.toLowerCase())));
-    say('（追問）' + q, hit ? hit[1] : '他皺了皺眉：「你在說什麼？我聽不懂。」'); logEvent(r.id, `追問 NPC ${BYID[id].title}：「${q}」${hit ? '（他鬆口了）' : ''}`, hit ? 2 : 0); w.querySelector('#nq').value = ''; snapScreen(); });
+    say('（追問）' + q, hit ? hit[1] : '他皺了皺眉：「你在說什麼？我聽不懂。」'); logEvent(r.id, `追問 NPC ${BYID[id].title}：「${q}」${hit ? '（他鬆口了）' : ''}`, hit ? 2 : 0, { npc: id, q, press: true, hit: !!hit }); w.querySelector('#nq').value = ''; snapScreen(); });
   win(BYID[id].title, w);
 }
 
@@ -1685,7 +1688,7 @@ function renderDM(){
     <div class="dmstatus" id="dms"></div>
     <div class="dmmain"><div class="dmtabs" role="tablist">
       <span class="tgrp">開場前</span>${tab('setup','開場設定')}${tab('players','玩家姓名')}${tab('script','主持流程')}
-      <span class="tgrp">進行中</span>${tab('overview','總覽')}${tab('progress','線索進度')}${tab('events','事件紀錄')}
+      <span class="tgrp">進行中</span>${tab('overview','總覽')}${tab('progress','線索進度')}${tab('npc','NPC')}${tab('events','事件紀錄')}
       <span class="tgrp">收尾</span>${tab('vote','投票')}${tab('answers','解答速查')}${tab('reset','重設')}
 </div>
     <div class="dmbody" id="dmb"></div></div></div>`);
@@ -1702,10 +1705,39 @@ function renderDM(){
     if (keepFocus) return;
     const sc = [body, body.parentElement, document.scrollingElement].map(x => x ? x.scrollTop : 0);
     body.innerHTML = '';
-    ({ progress:dmProgress, setup:dmSetup, overview:dmOverview, players:dmPlayers, events:dmEvents, vote:dmVote, script:dmScript, answers:dmAnswers, reset:dmReset })[dmTab](body);
+    ({ progress:dmProgress, npc:dmNpc, setup:dmSetup, overview:dmOverview, players:dmPlayers, events:dmEvents, vote:dmVote, script:dmScript, answers:dmAnswers, reset:dmReset })[dmTab](body);
     [body, body.parentElement, document.scrollingElement].forEach((x, i) => { if (x) x.scrollTop = sc[i]; });
   };
   dmRefresh = draw; draw();
+}
+/* ---------- DM：NPC ---------- */
+let NPC_OPEN = {};
+function npcEvents(id){ return events().filter(e => e.npc ? e.npc === id : (BYID[id] && /^(追問 )?問? ?NPC /.test(e.text) && e.text.includes('NPC ' + BYID[id].title + '：'))).map(e => {
+  if (e.npc) return e; const press = e.text.startsWith('追問'), m = e.text.match(/：「?(.*?)」?(（他鬆口了）)?$/); return Object.assign({}, e, { press, q: m ? m[1] : e.text, hit: /鬆口/.test(e.text) }); }); }
+function dmNpc(b){
+  const ids = (setup() ? setup().drop : []).filter(id => NPC[id]);
+  if (!ids.length) { b.append($(`<div><p style="color:var(--mute);margin-top:0">今晚沒有 NPC。人數少於 40 時，到「開場設定」套用後，被改成 NPC 的角色會出現在這裡。</p></div>`)); return; }
+  const who = id => `${esc(player(id).name || (BYID[id] ? BYID[id].title : id))}`;
+  const card = id => { const n = NPC[id], ev = npcEvents(id), hits = ev.filter(e => e.hit), askers = new Set(ev.map(e => e.role)), open = NPC_OPEN[id];
+    const cnt = q => ev.filter(e => !e.press && e.q === q).length;
+    return `<div class="npccard ${hits.length ? 'hit' : ''}">
+      <div class="npchd"><div><b>${id} ${esc(BYID[id].title)}</b><small>${esc(n.pub)}</small></div>
+        <div class="npcst"><span class="pill ${ev.length ? 'on' : ''}">被問 ${ev.length} 次・${askers.size} 人</span><span class="pill ${hits.length ? 'l2' : ''}">${hits.length ? '追問成功 ' + hits.length + ' 次' : '還沒人問出關鍵'}</span>
+        <button class="btn ghost sm" data-npc="${id}">${open ? '收起' : '展開'}</button></div></div>
+      ${open ? `<div class="npcbd">
+        <h4>固定問答（玩家點按鈕就會得到）</h4>
+        ${n.qa.map(([q, a]) => `<div class="npcqa"><b>${esc(q)}</b><span class="npcn">${cnt(q)} 次</span><p>${esc(a)}</p></div>`).join('')}
+        <h4>追問（玩家打字，含任一關鍵字才會鬆口；其他一律回「你在說什麼？我聽不懂。」）</h4>
+        ${(n.press || []).map(([kw, a]) => `<div class="npcqa"><b>關鍵字：${kw.map(k => `<code>${esc(k)}</code>`).join(' ')}</b><p>${esc(a)}</p></div>`).join('') || '<p style="color:var(--mute)">這個 NPC 沒有追問。</p>'}
+        <h4>誰問了什麼</h4>
+        <div class="evlist">${ev.map(e => `<div><time>${e.ts ? new Date(e.ts).toTimeString().slice(0, 5) : esc(e.clock || '')}</time><span>${e.role} ${who(e.role)}</span><span>${e.press ? (e.hit ? '<span class="pill l2">追問成功</span>' : '<span class="pill">追問落空</span>') : ''}${esc(e.q || '')}</span></div>`).join('') || '<p style="color:var(--mute)">還沒有人問過。</p>'}</div></div>` : ''}</div>`; };
+  const total = ids.reduce((a, id) => a + npcEvents(id).length, 0), hitN = ids.filter(id => npcEvents(id).some(e => e.hit)).length;
+  b.append($(`<div><p style="color:var(--mute);margin-top:0">今晚沒有人扮演的角色。玩家在手機的「問 NPC」App 裡點固定問題，或打字追問；這裡讓你確認每個 NPC 會說什麼、誰問過他。你不用替 NPC 回答。</p>
+    <div class="cards"><div class="stat"><small>NPC</small><b>${ids.length}</b></div><div class="stat"><small>被問總次數</small><b>${total}</b></div><div class="stat"><small>已被問出關鍵</small><b>${hitN}</b> / ${ids.filter(id => (NPC[id].press || []).length).length}</div></div>
+    <div style="margin:10px 0"><button class="btn ghost sm" id="npcall">${ids.every(id => NPC_OPEN[id]) ? '全部收起' : '全部展開'}</button></div>
+    <div class="npclist">${ids.map(card).join('')}</div></div>`));
+  b.querySelectorAll('[data-npc]').forEach(x => x.addEventListener('click', () => { NPC_OPEN[x.dataset.npc] = !NPC_OPEN[x.dataset.npc]; if (dmRefresh) dmRefresh(); }));
+  b.querySelector('#npcall').addEventListener('click', () => { const all = ids.every(id => NPC_OPEN[id]); ids.forEach(id => NPC_OPEN[id] = !all); if (dmRefresh) dmRefresh(); });
 }
 /* ---------- DM：線索進度 ---------- */
 const FLAG_SRC = { solved:'每個人', cctv:'保全（監視器）', plateAgent:'保全（停車登記）', plateCop:'保全（停車登記）', schedule:'經紀人／剪輯師／小編（雲端）', backup:'經紀人／剪輯師／小編（雲端）', backupRule:'經紀人／剪輯師／小編（雲端）', recWeather:'對手網紅（錄音）', rec027:'對手網紅（錄音）', vidWrist:'外地粉絲（錄影，要有人先懷疑直播）', vidFront:'外地粉絲（錄影）', fire119:'保全（市話 119）', yaoCharged:'手機持有者＋助理的行動電源', yaoUnlocked:'手機持有者（密碼 0612）', yaoData:'手機持有者', lottery027:'粉絲團團長（抽獎系統）' };
@@ -1855,7 +1887,7 @@ function dmSetup(b){
   const cur = setup(), n0 = SETUP_DRAFT !== null ? SETUP_DRAFT : (cur ? cur.n : 40);
   const row = (g, i) => `<tr><td><b>玩家 ${i + 1}</b></td><td>${g.map(id => `${id}　${esc(BYID[id].title)}${id === KILLER ? ' <span class="pill l3">兇手</span>' : ''}`).join('<br>')}</td><td style="font-family:var(--f-mono);font-size:15px"><b>${BYID[g[0]].key}</b></td><td>${g.length > 1 ? '<span class="pill">一人兩角・手機有兩頁</span>' : ''}</td></tr>`;
   const preview = n => { const plan = planFor(n), text = plan.groups.map((g, i) => `玩家${i + 1}：金鑰 ${BYID[g[0]].key}　` + g.map(id => BYID[id].title).join(' ＋ ')).join('\n');
-    return `${plan.drop.length ? `<h3 class="sec">改成 NPC 的角色（${plan.drop.length}）</h3><p>${plan.drop.map(id => `${id} ${esc(BYID[id].title)}`).join('、')}</p><p style="color:var(--mute);font-size:12.5px">NPC 的金鑰不能登入，但仍在投票名單上（標示 NPC），因為他們今晚也在會館裡。玩家問到 NPC 時，你只回答「他今晚沒有人扮演」，不要替他說話。</p>` : ''}
+    return `${plan.drop.length ? `<h3 class="sec">改成 NPC 的角色（${plan.drop.length}）</h3><p>${plan.drop.map(id => `${id} ${esc(BYID[id].title)}`).join('、')}</p><p style="color:var(--mute);font-size:12.5px">NPC 的金鑰不能登入，但仍在投票名單上（標示 NPC），因為他們今晚也在會館裡。玩家當面問你 NPC 的事，請他用手機裡的「問 NPC」App 問，你不用替 NPC 說話；「NPC」分頁可以看他們會說什麼、誰問過。</p>` : ''}
     <h3 class="sec">發給玩家的金鑰（${plan.groups.length} 位玩家）</h3>
     <div class="tblwrap"><table class="tbl"><thead><tr><th>玩家</th><th>角色</th><th>金鑰</th><th></th></tr></thead><tbody>${plan.groups.map(row).join('')}</tbody></table></div>
     <h3 class="sec">可複製的清單</h3><textarea class="ann" readonly style="min-height:160px">${esc(text)}</textarea>`; };
@@ -1893,7 +1925,7 @@ function dmScript(b){
     ${step(3,'開場朗讀','用你的聲音把案件經過唸一次，營造氣氛。','「今晚，十週年見面會。大霧、豪雨，下山的路被落石封住。23:15，曜曜被發現倒在二樓休息室，背後插著一把刀。警察天亮才能上山。在那之前——兇手，就在你們之中。」')}
     ${step(4,'閱讀身分文件（10～15 分鐘）','每人讀自己的身分文件、試著解開個人線索。這段時間只回答「看不懂」的問題。')}
     ${step(5,'自我介紹輪（每人 30 秒）','依角色編號或座位輪流。每個人至少要講出「必須公開」那一句。')}
-    ${step(6,'自由搜證與討論','玩家自己交換資訊、在手機上查系統。你到「總覽」和「事件紀錄」看大家推理到哪一層。曜曜的手機被交出或賣掉時，到「總覽」指派持有者。')}
+    ${step(6,'自由搜證與討論','玩家自己交換資訊、在手機上查系統。你到「總覽」和「事件紀錄」看大家推理到哪一層。曜曜的手機被交出或賣掉時，到「總覽」指派持有者。人數少於 40 時，「NPC」分頁可以看每個 NPC 會說什麼、誰問過他。')}
     ${step(7,'開放投票','覺得大家討論得差不多了，到「總覽」切換成「開放投票」，給 3～5 分鐘。可以先發公告「5 分鐘後開放投票」。')}
     ${step(8,'揭曉真相','切換成「揭曉真相」，每支手機會顯示真相和自己的結局。你可以照「解答速查」的真相時間軸，從 20:50 一路講到 23:15。','「曜曜在 21:40 就死了。22:00 的直播，是三天前錄好的……」')}
     <h3 class="sec">卡關時可以給的提示（只在大家都卡住時用）</h3>
