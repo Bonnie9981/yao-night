@@ -1779,36 +1779,43 @@ function bindPhase(b){ b.querySelectorAll('[data-ph]').forEach(x => x.addEventLi
   const go = async () => { await store.merge('game/state', { phase: ph }); if (ph !== 'play') clearReady(); logEvent('DM', '遊戲階段改為「' + x.textContent + '」', 0); toast('階段已切換', ph === 'vote' ? '所有手機出現投票 App。' : ph === 'reveal' ? '所有手機可以看真相與結局。' : '回到搜證。', 'bell'); };
   if (ph === 'reveal' || cur === 'reveal') { if (!x.parentElement.querySelector('.confirm')) confirmBox(x.parentElement, ph === 'reveal' ? '確定揭曉真相？每支手機會立刻看到兇手和自己的結局，無法收回。' : '確定回到遊戲？玩家已經看過真相了。', go); } else go(); })); }
 const evRow = e => `<div><time title="遊戲內時間 ${esc(e.clock || '')}">${e.ts ? new Date(e.ts).toTimeString().slice(0, 5) : esc(e.clock || '')}</time><span>${esc(e.role)} ${esc(e.role === 'DM' ? '' : (player(e.role).name || (ROSTER.find(x => x[0] === e.role) || [,''])[1]))}</span><span>${e.level ? `<span class="pill l${e.level}">${['','①','②','③'][e.level]}</span>` : ''}${esc(e.text)}</span></div>`;
+/* 一位玩家＝一組角色（一人兩角時兩個角色合成一列） */
+function people(){ const st = setup(); const act = st ? st.groups.map(g => g.slice()) : ROSTER.map(([id]) => [id]); return act; }
 function dmPlayers(b){
-  const rows = ROSTER.map(([id, t]) => {
-    const p = prog(id), pl = player(id), f = flags(id);
-    return `<tr class="${isActive(id) ? '' : 'npc'}"><td><b>${id}</b><br><span style="color:var(--mute)">${esc(t)}</span>${id===KILLER?'<br><span class="pill l3">兇手</span>':''}${!isActive(id)?'<br><span class="pill">NPC（今晚沒人扮演）</span>':''}<br><span style="font-family:var(--f-mono);font-size:11.5px;color:var(--mute)">${BYID[id].key}</span>${BYID[id].merge?`<br><span class="pill">30人版併 ${BYID[id].merge}</span>`:''}</td>
-      <td><input data-name="${id}" value="${esc(DRAFT[id] && DRAFT[id].name !== undefined ? DRAFT[id].name : (pl.name || ''))}" placeholder="玩家姓名" aria-label="${id} 玩家姓名"></td>
-      <td><input data-photo="${id}" value="${esc(DRAFT[id] && DRAFT[id].photo !== undefined ? DRAFT[id].photo : (pl.photo || ''))}" placeholder="照片網址" aria-label="${id} 照片網址"></td>
-      <td>${p && p.login ? '<span class="pill on">已登入</span>' : '<span class="pill">未登入</span>'}</td>
-      <td>${Object.keys(f).map(k => FLAG_LABEL[k] ? `<span class="pill l${FLAG_LABEL[k][1]}">${FLAG_LABEL[k][0]}</span>` : '').join('') || '<span style="color:var(--mute)">—</span>'}</td>
-      <td>${p || rosterOf(id).login ? `<button class="btn ghost sm" data-reset="${id}">重設</button>` : ''}</td></tr>`;
-  }).join('');
-  b.append($(`<div><p style="color:var(--mute);margin-top:0">姓名與照片填完後按「儲存」，所有手機的身分文件和投票名單會同步更新。照片可以填圖片網址（例如 Gemini 生成後上傳到雲端的公開連結）。</p>
+  const npcs = ROSTER.filter(([id]) => !isActive(id)).map(([id]) => id);
+  const row = (g, i) => { const gk = g.join('+'), first = g[0], pl = player(first), d = DRAFT[gk] || {};
+    const login = g.some(id => rosterOf(id).login || (prog(id) && prog(id).login)), hasProg = g.some(id => prog(id) || rosterOf(id).login);
+    const fl = [...new Set(g.flatMap(id => Object.keys(flags(id))))];
+    return `<tr><td><b>${setup() ? '玩家 ' + (i + 1) : first}</b><span style="font-family:var(--f-mono);font-size:12px;color:var(--mute);margin-left:6px">金鑰 ${BYID[first].key}</span>
+        ${g.map(id => `<br><span>${id} ${esc(BYID[id].title)}</span>${id === KILLER ? ' <span class="pill l3">兇手</span>' : ''}`).join('')}${g.length > 1 ? '<br><span class="pill">一人兩角</span>' : ''}</td>
+      <td><input data-name="${gk}" value="${esc(d.name !== undefined ? d.name : (pl.name || ''))}" placeholder="玩家姓名" aria-label="${esc(gk)} 玩家姓名"></td>
+      <td><input data-photo="${gk}" value="${esc(d.photo !== undefined ? d.photo : (pl.photo || ''))}" placeholder="照片網址" aria-label="${esc(gk)} 照片網址"></td>
+      <td>${login ? '<span class="pill on">已登入</span>' : '<span class="pill">未登入</span>'}</td>
+      <td>${fl.map(k => FLAG_LABEL[k] ? `<span class="pill l${FLAG_LABEL[k][1]}">${FLAG_LABEL[k][0]}</span>` : '').join('') || '<span style="color:var(--mute)">—</span>'}</td>
+      <td>${hasProg ? `<button class="btn ghost sm" data-reset="${gk}">重設</button>` : ''}</td></tr>`; };
+  const ps = people();
+  b.append($(`<div><p style="color:var(--mute);margin-top:0">一列是一位玩家。姓名與照片填完後按「儲存」，所有手機的身分文件和投票名單會同步更新；一人兩角的玩家，兩個角色會用同一個名字。照片可以填圖片網址。</p>
     <div style="margin-bottom:10px"><button class="btn sm" id="savepl">儲存姓名與照片</button> <span id="saved" style="color:var(--ok);font-size:13px"></span></div>
-    <div class="tblwrap"><table class="tbl"><thead><tr><th>角色</th><th>玩家姓名</th><th>照片</th><th>狀態</th><th>已發現</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>`));
-  b.querySelectorAll('[data-name]').forEach(i => i.addEventListener('input', () => { (DRAFT[i.dataset.name] ||= {}).name = i.value; }));
-  b.querySelectorAll('[data-photo]').forEach(i => i.addEventListener('input', () => { (DRAFT[i.dataset.photo] ||= {}).photo = i.value; }));
-  const unsaved = Object.keys(DRAFT).length; if (unsaved) b.querySelector('#saved').textContent = `有 ${unsaved} 個角色還沒儲存`;
+    <div class="tblwrap"><table class="tbl"><thead><tr><th>玩家</th><th>玩家姓名</th><th>照片</th><th>狀態</th><th>已發現</th><th></th></tr></thead><tbody>${ps.map(row).join('')}</tbody></table></div>
+    ${npcs.length ? `<h3 class="sec">今晚的 NPC（沒有人扮演，不用填姓名）</h3><p style="color:var(--mute)">${npcs.map(id => `${id} ${esc(BYID[id].title)}`).join('、')}</p>` : ''}</div>`));
+  b.querySelectorAll('[data-name]').forEach(x => x.addEventListener('input', () => { (DRAFT[x.dataset.name] ||= {}).name = x.value; }));
+  b.querySelectorAll('[data-photo]').forEach(x => x.addEventListener('input', () => { (DRAFT[x.dataset.photo] ||= {}).photo = x.value; }));
+  const unsaved = Object.keys(DRAFT).length; if (unsaved) b.querySelector('#saved').textContent = `有 ${unsaved} 位玩家還沒儲存`;
   b.querySelector('#savepl').addEventListener('click', async () => {
-    const ids = Object.keys(DRAFT);
-    for (const id of ids) { const cur = player(id), d = DRAFT[id];
+    const gks = Object.keys(DRAFT);
+    for (const gk of gks) { const ids = gk.split('+'), cur = player(ids[0]), d = DRAFT[gk];
       const name = (d.name !== undefined ? d.name : (cur.name || '')).trim(), photo = (d.photo !== undefined ? d.photo : (cur.photo || '')).trim();
-      if ((cur.name || '') !== name || (cur.photo || '') !== photo) await store.set('players/' + id, { name, photo });
-      delete DRAFT[id]; }
+      for (const id of ids) { const c = player(id); if ((c.name || '') !== name || (c.photo || '') !== photo) await store.set('players/' + id, { name, photo }); }
+      delete DRAFT[gk]; }
     document.activeElement && document.activeElement.blur(); dmRefresh && dmRefresh();
-    const sv = document.getElementById('saved'); if (sv) sv.textContent = ids.length ? '已儲存' : '沒有變更';
+    const sv = document.getElementById('saved'); if (sv) sv.textContent = gks.length ? '已儲存' : '沒有變更';
   });
-  b.querySelectorAll('[data-reset]').forEach(x => x.addEventListener('click', () => confirmBox(x.closest('td'), `重設 ${x.dataset.reset} 的進度？他的手機會回到鎖定畫面，解開的謎題與發現全部清除。`, async () => {
-    const rid = x.dataset.reset, mine = Object.keys(flags(rid)), others = new Set(); ROSTER.forEach(([id]) => { if (id !== rid) Object.keys(flags(id)).forEach(k => others.add(k)); });
+  b.querySelectorAll('[data-reset]').forEach(x => x.addEventListener('click', () => confirmBox(x.closest('td'), `重設這位玩家的進度？他的手機會回到鎖定畫面，解開的謎題與發現全部清除。`, async () => {
+    const ids = x.dataset.reset.split('+'), mine = new Set(ids.flatMap(id => Object.keys(flags(id)))), others = new Set(); ROSTER.forEach(([id]) => { if (!ids.includes(id)) Object.keys(flags(id)).forEach(k => others.add(k)); });
     const gf = Object.assign({}, game().gflags || {}); mine.forEach(k => { if (!others.has(k)) delete gf[k]; });
-    const ro = Object.assign({}, game().roster || {}); delete ro[rid];
-    await store.del('progress/' + rid); await store.del('votes/' + rid); await store.del('monitor/' + rid); await store.set('game/state', Object.assign({}, game(), { gflags: gf, roster: ro })); logEvent('DM', `重設 ${x.dataset.reset} 的進度`, 0); })));
+    const ro = Object.assign({}, game().roster || {}); ids.forEach(id => delete ro[id]);
+    for (const id of ids) { await store.del('progress/' + id); await store.del('votes/' + id); await store.del('monitor/' + id); }
+    await store.set('game/state', Object.assign({}, game(), { gflags: gf, roster: ro })); logEvent('DM', `重設 ${ids.join('＋')} 的進度`, 0); })));
 }
 function confirmBox(anchor, text, onYes){
   const c = $(`<div class="confirm"><p style="margin:0 0 8px;font-size:13px">${esc(text)}</p><button class="btn danger sm">確定</button> <button class="btn ghost sm">取消</button></div>`);
@@ -1830,16 +1837,17 @@ function bindEvFilter(b){ const q = b.querySelector('#evq'), l = b.querySelector
   if (l) l.addEventListener('change', () => { EV_L = +l.value; l.blur(); if (dmRefresh) dmRefresh(); }); apply(); }
 function dmVote(b){
   const vs = Object.entries(SH).filter(([k]) => k.startsWith('votes/')).map(([k,v]) => [k.slice(6), v.target]);
-  const tally = {}; vs.forEach(([,t]) => tally[t] = (tally[t] || 0) + 1);
+  const vsP = (() => { const seen = new Set(); return vs.filter(([v]) => { const k = personKey(v); if (seen.has(k)) return false; seen.add(k); return true; }); })();
+  const tally = {}; vsP.forEach(([,t]) => tally[t] = (tally[t] || 0) + 1);
   const max = Math.max(1, ...Object.values(tally));
   const top = Object.entries(tally).sort((a,b) => b[1]-a[1]);
   const vo = voteOutcome(), killerVotes = vo.e1, majority = vo.caught;
   b.append($(`<div>
-    <div class="cards"><div class="stat"><small>已投票</small><b>${vs.length}</b></div><div class="stat"><small>投中兇手</small><b>${killerVotes}</b></div><div class="stat"><small>目前結果</small><b style="font-size:15px">${vs.length ? (majority ? '多數投中，玩家獲勝' : '兇手暫時逃過') : '—'}</b></div></div>
+    <div class="cards"><div class="stat"><small>已投票（人）</small><b>${vsP.length}</b></div><div class="stat"><small>投中兇手</small><b>${killerVotes}</b></div><div class="stat"><small>目前結果</small><b style="font-size:15px">${vsP.length ? (majority ? '多數投中，玩家獲勝' : '兇手暫時逃過') : '—'}</b></div></div>
     <div class="bars">${top.map(([id,n]) => `<div class="barrow"><span>${id} ${esc(player(id).name || (ROSTER.find(x=>x[0]===id)||[,''])[1])}</span><div class="track"><div class="fill" style="width:${n/max*100}%;${id===KILLER?'background:var(--alert)':''}"></div></div><span>${n}</span></div>`).join('') || '<p style="color:var(--mute)">還沒有人投票。按下方「開放投票」（或等三分之二玩家按準備自動開放），玩家桌面會出現投票 App。</p>'}</div>
     <h3 class="sec">遊戲階段</h3><div class="phase">${[['play','進行中'],['vote','開放投票'],['reveal','揭曉真相']].map(([k,t]) => `<button data-ph="${k}" aria-pressed="${(game().phase||'play')===k}">${t}</button>`).join('')}</div>
-    ${(() => { const voted = new Set(vs.map(x => x[0])), left = ROSTER.filter(([id]) => isActive(id) && (rosterOf(id).login || (prog(id) && prog(id).login)) && !voted.has(id)); return `<h3 class="sec">已登入、還沒投票（${left.length}）</h3>${left.length ? `<div class="novote">${left.map(([id, t]) => `<span>${id} ${esc(player(id).name || t)}</span>`).join('')}</div>` : '<p style="color:var(--mute)">已登入的玩家都投了。</p>'}`; })()}
-    <h3 class="sec">誰投給誰</h3><div class="evlist">${vs.map(([v,t]) => `<div><span>${v}</span><span>${esc(player(v).name || (ROSTER.find(x=>x[0]===v)||[,''])[1])}</span><span>→ ${t} ${esc(player(t).name || (ROSTER.find(x=>x[0]===t)||[,''])[1])}</span></div>`).join('') || '<p style="color:var(--mute)">—</p>'}</div></div>`));
+    ${(() => { const voted = new Set(vs.map(x => x[0])), left = people().filter(g => g.some(id => rosterOf(id).login || (prog(id) && prog(id).login)) && !g.some(id => voted.has(id))); return `<h3 class="sec">已登入、還沒投票（${left.length} 人）</h3>${left.length ? `<div class="novote">${left.map(g => `<span>${esc(player(g[0]).name || g.map(id => BYID[id].title).join('＋'))}</span>`).join('')}</div>` : '<p style="color:var(--mute)">已登入的玩家都投了。</p>'}`; })()}
+    <h3 class="sec">誰投給誰</h3><div class="evlist">${(() => { const seen = new Set(); return vs.filter(([v]) => { const k = personKey(v); if (seen.has(k)) return false; seen.add(k); return true; }).map(([v,t]) => { const g = groupOf(v); return `<div><span>${g.join('＋')}</span><span>${esc(player(v).name || g.map(id => BYID[id].title).join('＋'))}</span><span>→ ${t} ${esc(player(t).name || BYID[t].title)}</span></div>`; }).join(''); })() || '<p style="color:var(--mute)">—</p>'}</div></div>`));
   bindPhase(b);
 }
 let SETUP_DRAFT = null;
