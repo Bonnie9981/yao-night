@@ -625,7 +625,7 @@ function renderHome(){
   const ann = g.announce && g.announce.text ? `<div class="banner"><b>系統公告</b>${esc(g.announce.text)}</div>` : '';
   const el = $(`<div class="home">
     <div class="who"><div class="ava">${portraitHTML(r.id, p.photo)}</div>
-      <div><b>${esc(p.name || '（玩家姓名）')}</b><span>${esc(r.title)}・${r.key}</span></div>
+      <div><b>${esc(p.name || '（玩家姓名）')}</b><span>${esc(r.title)}・${BYID[groupOf(r.id)[0]].key}</span></div>
       <div class="hbtns"><button class="ibtn" id="nbell" aria-label="通知">${ICONS.bell}<span class="cnt" ${NOTIFS.length ? '' : 'hidden'}>${NOTIFS.length}</span></button><button class="ibtn" id="fsz" aria-label="調整字級">Aa</button><button class="btn ghost sm" id="logout">登出</button></div></div>
     ${groupOf(r.id).length > 1 ? `<div class="pager" role="tablist">${groupOf(r.id).map(id => `<button role="tab" data-pg="${id}" aria-selected="${id === r.id}">${esc(BYID[id].title)}</button>`).join('')}</div>` : ''}
     ${prevBar}${ann}${widget}
