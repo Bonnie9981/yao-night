@@ -648,13 +648,8 @@ function onboarding(r){
 let LOCAL_SEEN = (() => { try { return JSON.parse(localStorage.getItem('yao-seen') || '{}'); } catch(e) { return {}; } })(), screenT = 0, screenLast = 0, screenSig = '', seenDirty = false;
 const mon = id => SH['monitor/' + id] || {};
 function track(key){ const r = role(); if (!r || S.dm || PREVIEW) return; const L = LOCAL_SEEN[r.id] = LOCAL_SEEN[r.id] || {}; if (L[key]) return; L[key] = Date.now(); localSet('yao-seen', JSON.stringify(LOCAL_SEEN)); seenDirty = true; snapScreen(); }
-function snapScreen(){ clearTimeout(screenT); const wait = Math.max(1500, 30000 - (Date.now() - screenLast)); screenT = setTimeout(() => { const r = role(); if (!r || S.dm || PREVIEW) return;
-  const c = document.querySelector('.calling'), ws = document.querySelectorAll('.win'), w = ws[ws.length - 1];
-  const title = c ? '通話中' : w ? w.getAttribute('aria-label') : '桌面';
-  const text = c ? c.innerText : w ? w.querySelector('.body').innerText : [...document.querySelectorAll('[data-app]')].map(a => a.innerText.trim()).join('、');
-  const body = (text || '').replace(/\n{2,}/g, '\n').slice(0, 900), sig = title + '|' + body; if (sig === screenSig && !seenDirty) return;
-  screenSig = sig; screenLast = Date.now(); const data = { screen: { title, text: body, ts: Date.now() } }; if (seenDirty) { data.seen = Object.assign({}, LOCAL_SEEN[r.id] || {}); seenDirty = false; }
-  store.merge('monitor/' + r.id, data).catch(() => {}); }, wait); }
+function snapScreen(){ if (!seenDirty) return; clearTimeout(screenT); const wait = Math.max(1500, 30000 - (Date.now() - screenLast)); screenT = setTimeout(() => { const r = role(); if (!r || S.dm || PREVIEW || !seenDirty) return;
+  screenLast = Date.now(); seenDirty = false; store.merge('monitor/' + r.id, { seen: Object.assign({}, LOCAL_SEEN[r.id] || {}) }).catch(() => {}); }, wait); }
 function win(title, inner, onBack){
   const w = $(`<section class="win" aria-label="${esc(title)}"><div class="bar"><button aria-label="返回">‹ 返回</button><h2>${esc(title)}</h2></div><div class="body"></div></section>`);
   w.querySelector('.body').append(...(Array.isArray(inner) ? inner : [inner]));
@@ -1679,7 +1674,7 @@ function renderDM(){
     <div class="dmstatus" id="dms"></div>
     <div class="dmmain"><div class="dmtabs" role="tablist">
       <span class="tgrp">開場前</span>${tab('setup','開場設定')}${tab('players','玩家姓名')}${tab('script','主持流程')}
-      <span class="tgrp">進行中</span>${tab('overview','總覽')}${tab('progress','線索進度')}${tab('monitor','即時畫面')}${tab('events','事件紀錄')}
+      <span class="tgrp">進行中</span>${tab('overview','總覽')}${tab('progress','線索進度')}${tab('events','事件紀錄')}
       <span class="tgrp">收尾</span>${tab('vote','投票')}${tab('answers','解答速查')}${tab('reset','重設')}
 </div>
     <div class="dmbody" id="dmb"></div></div></div>`);
@@ -1696,7 +1691,7 @@ function renderDM(){
     if (keepFocus) return;
     const sc = [body, body.parentElement, document.scrollingElement].map(x => x ? x.scrollTop : 0);
     body.innerHTML = '';
-    ({ progress:dmProgress, monitor:dmMonitor, setup:dmSetup, overview:dmOverview, players:dmPlayers, events:dmEvents, vote:dmVote, script:dmScript, answers:dmAnswers, reset:dmReset })[dmTab](body);
+    ({ progress:dmProgress, setup:dmSetup, overview:dmOverview, players:dmPlayers, events:dmEvents, vote:dmVote, script:dmScript, answers:dmAnswers, reset:dmReset })[dmTab](body);
     [body, body.parentElement, document.scrollingElement].forEach((x, i) => { if (x) x.scrollTop = sc[i]; });
   };
   dmRefresh = draw; draw();
@@ -1733,19 +1728,6 @@ function dmProgress(b){
     <h3 class="sec">每個角色的探索進度</h3><p style="color:var(--mute);font-size:12.5px;margin-top:0">進度＝這個角色手機裡的東西看過多少（App、LINE 對話、照片、放大）＋個人謎題。按「明細」看哪些還沒看。</p>
     <div class="tblwrap"><table class="tbl"><thead><tr><th>角色</th><th>登入</th><th>謎題</th><th>探索進度</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>`));
   b.querySelectorAll('[data-open]').forEach(x => x.addEventListener('click', () => { DM_OPEN[x.dataset.open] = !DM_OPEN[x.dataset.open]; if (dmRefresh) dmRefresh(); }));
-}
-/* ---------- DM：即時畫面 ---------- */
-let MON_FILTER = '';
-function dmMonitor(b){
-  const ago = ts => { const s = Math.max(0, Math.round((Date.now() - ts) / 1000)); return s < 60 ? s + ' 秒前' : Math.round(s / 60) + ' 分鐘前'; };
-  const list = ROSTER.filter(([id]) => isActive(id) && prog(id) && prog(id).login).map(([id, t]) => [id, t, (mon(id).screen || {})]).sort((a, c) => (c[2].ts || 0) - (a[2].ts || 0));
-  b.append($(`<div class="mon"><p style="color:var(--mute);margin-top:0">每支手機目前打開的畫面（文字版。為了節省 Firebase 用量，每支手機最快 30 秒更新一次，畫面沒變就不更新）。最近有動作的排在前面。</p>
-    <input id="mf" placeholder="搜尋角色或玩家姓名" value="${esc(MON_FILTER)}" style="background:#0b1214;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:8px;margin-bottom:10px;width:240px">
-    <div class="mongrid">${list.map(([id, t, sc]) => `<div class="moncard" data-s="${esc(id + t + (player(id).name || ''))}"><div class="monhd"><b>${id} ${esc(t)}</b><span>${esc(player(id).name || '')} <a href="${previewURL(id)}" target="_blank" rel="noopener" class="mlink">預覽</a></span></div>
-      <div class="monsub"><span class="pill ${sc.ts && Date.now() - sc.ts < 90000 ? 'on' : ''}">${esc(sc.title || '—')}</span><small>${sc.ts ? ago(sc.ts) : '還沒有畫面'}</small></div>
-      <pre>${esc(sc.text || '')}</pre></div>`).join('') || '<p style="color:var(--mute)">還沒有人登入。</p>'}</div></div>`));
-  const mf = b.querySelector('#mf'), apply = () => { const q = MON_FILTER.toUpperCase(); b.querySelectorAll('.moncard').forEach(c => { c.hidden = !!q && !c.dataset.s.toUpperCase().includes(q); }); };
-  mf.addEventListener('input', () => { MON_FILTER = mf.value.trim(); apply(); }); mf.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === 'Escape') mf.blur(); }); apply();
 }
 const events = () => Object.entries(SH).filter(([k]) => k.startsWith('events/')).map(([,v]) => v).sort((a,b) => b.ts - a.ts);
 function dmOverview(b){
@@ -1876,7 +1858,7 @@ function dmStatusHTML(){
   const stall = all.length ? Math.round((Date.now() - Math.max(...all)) / 60000) : null, [rn, rt] = readyCount(), vo = voteOutcome();
   const ph = { play: '搜證中', vote: '投票中', reveal: '已揭曉' }[g.phase || 'play'];
   const chip = (label, val, cls, go) => `<button class="schip ${cls || ''}" data-go="${go}" title="點一下打開相關分頁"><small>${label}</small><b>${val}</b></button>`;
-  return chip('階段', ph, 'ph-' + (g.phase || 'play'), 'overview') + chip('遊戲時間', mins === null ? '—' : `${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')}`, '', 'events') + chip('已登入', `${logged} / ${act.length}`, '', 'monitor')
+  return chip('階段', ph, 'ph-' + (g.phase || 'play'), 'overview') + chip('遊戲時間', mins === null ? '—' : `${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')}`, '', 'events') + chip('已登入', `${logged} / ${act.length}`, '', 'players')
     + chip('準備投票', `${rn} / ${rt}`, '', 'vote') + chip('已投票', vo.total, '', 'vote') + chip('曜曜的手機', esc(BYID[g.yaoHolder || 'F5'].title), '', 'overview') + chip('上次關鍵發現', stall === null ? '—' : stall + ' 分鐘前', stall !== null && stall >= 10 ? 'warn' : '', 'progress');
 }
 /* DM 重要事件提醒 */
@@ -1961,8 +1943,6 @@ let unwatch = store.watch(onShared);
 applyFsz();
 const netBar = () => { let n = document.getElementById('netbar'); if (!navigator.onLine) { if (!n) { n = $(`<div id="netbar" class="netbar">網路斷線了。恢復連線後會自動同步，你看到的內容不會消失。</div>`); phone.appendChild(n); } } else if (n) n.remove(); };
 window.addEventListener('online', netBar); window.addEventListener('offline', netBar);
-screen.addEventListener('click', () => { if (role() && !S.dm) snapScreen(); }, true);
-screen.addEventListener('submit', () => { if (role() && !S.dm) setTimeout(snapScreen, 300); }, true);
 (async () => {
   try {
     if (FIREBASE_CONFIG) { const fb = readOnly(await FirebaseStore(FIREBASE_CONFIG)); unwatch(); store = fb; unwatch = store.watch(onShared); if (role()) listenOwn(role().id); syncDot.classList.add('on'); syncDot.title = '已連線：Firebase 全場同步'; return; }
